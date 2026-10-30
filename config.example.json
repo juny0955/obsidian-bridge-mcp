@@ -1,0 +1,5 @@
+{
+  "vault": "/absolute/path/to/your/obsidian-vault",
+  "stateDir": "/absolute/path/to/Obsidian-Bridge/state",
+  "enabled": false
+}
