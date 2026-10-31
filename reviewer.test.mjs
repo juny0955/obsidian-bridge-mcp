@@ -99,6 +99,18 @@ test('review moves an Inbox note without changing its body or provenance', t => 
   assert.deepEqual(reviewer.completeReview(args), result);
 });
 
+test('review move retry refuses a reappeared source', t => {
+  const { config, put } = fixture(t);
+  const source = '00-Inbox/주제.md', destination = '04-Knowledge/주제.md';
+  put(source, sample());
+  const reviewer = new ReviewerVault(config);
+  const args = { path: source, destination, expected_sha256: hash(sample()), rationale: '확인함' };
+  reviewer.completeReview(args);
+  put(source, sample());
+  assert.throws(() => reviewer.completeReview(args), /record disagrees/u);
+  assert.equal(fs.readFileSync(path.join(config.vault, source), 'utf8'), sample());
+});
+
 test('review move rejects an existing destination without changing either file', t => {
   const { config, put } = fixture(t);
   const source = '00-Inbox/주제.md', destination = '04-Knowledge/주제.md';
@@ -146,6 +158,30 @@ test('MCP role isolation exposes Reviewer tools but neither role can invoke the 
   const writerReplies = writer.stdout.trim().split('\n').map(JSON.parse);
   assert.deepEqual(writerReplies[1].result.tools.map(tool => tool.name), ['get_context', 'search_notes', 'read_note', 'remember', 'skip_turn']);
   assert.equal(writerReplies[4].result.isError, true);
+});
+
+test('reviewer context includes separate role policy and vault rules', t => {
+  const { root, config, put } = fixture(t);
+  put('AGENTS.md', '# 공통');
+  put('99-System/AI/PROPERTY_SCHEMA.md', '# 상태: curated');
+  put('99-System/AI/NOTE_RULES.md', '# Writer 정책');
+  put('99-System/Templates/Knowledge.md', '# Template');
+  const configPath = path.join(root, 'reviewer.json');
+  fs.writeFileSync(configPath, JSON.stringify(config));
+  const result = spawnSync(process.execPath, [new URL('./reviewer-server.mjs', import.meta.url).pathname], {
+    cwd: root, env: { ...process.env, OBSIDIAN_REVIEWER_CONFIG: configPath },
+    input: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'get_context', arguments: {} } }) + '\n',
+    encoding: 'utf8', timeout: 10000,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const reply = JSON.parse(result.stdout).result;
+  assert.equal(reply.isError, false);
+  const context = JSON.parse(reply.content[0].text);
+  assert.ok(context.rules.some(rule => rule.path.endsWith('NOTE_RULES.md') && rule.content.includes('Writer 정책')));
+  assert.ok(context.rules.some(rule => rule.path.endsWith('PROPERTY_SCHEMA.md') && rule.content.includes('curated')));
+  assert.ok(context.reviewerPolicy.includes('Reviewer'));
+  assert.ok(context.reviewerPolicy.includes('Writer'));
+  assert.ok(context.reviewerPolicy.includes('evergreen'));
 });
 
 test('reviewer startup refuses absent, disabled or wrong-role config', t => {

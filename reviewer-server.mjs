@@ -30,7 +30,7 @@ function callTool(params) {
   check(Object.keys(args).every(key => Object.hasOwn(tool.inputSchema.properties, key)), 'Unexpected argument');
   check(Object.entries(args).every(([key, value]) => tool.inputSchema.properties[key].type === 'string' && typeof value === 'string'), 'Invalid argument type');
   switch (params.name) {
-    case 'get_context': return reviewer.vault.context();
+    case 'get_context': return { ...reviewer.vault.context(), reviewerPolicy: fs.readFileSync(new URL('./reviewer-policy.md', import.meta.url), 'utf8') };
     case 'list_review_notes': return reviewer.listReviewNotes();
     case 'read_note': return reviewer.vault.read(args.path);
     case 'complete_review': return reviewer.completeReview(args);

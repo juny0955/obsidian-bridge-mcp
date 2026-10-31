@@ -40,6 +40,7 @@ export class ReviewerVault {
       if (fs.existsSync(record)) {
         const previous = JSON.parse(fs.readFileSync(record, 'utf8'));
         check(previous.rationale === args.rationale && previous.path === args.destination &&
+          (source === destination || !fs.existsSync(source)) &&
           this.vault.read(args.destination).sha256 === previous.sha256 &&
           /^status: curated$/mu.test(this.vault.read(args.destination).content), 'Review record disagrees with note');
         return { status: 'curated', path: previous.path, sha256: previous.sha256 };
