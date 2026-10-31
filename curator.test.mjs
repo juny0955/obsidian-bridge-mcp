@@ -311,6 +311,21 @@ test('move reviewed inbox note without changing bytes then finalize destination'
   assert.deepEqual(curator.moveNote({ operation_id: op, path: source, destination, expected_sha256: hash(original), rationale: '지식으로 분류' }), moved);
 });
 
+test('move then organize and finalize supports retries at each stage', t => {
+  const { config, put, vault } = fixture(t), source = '00-Inbox/topic.md', destination = '04-Knowledge/topic.md', original = sample(), op = 'move-organize';
+  put(source, original); fs.mkdirSync(path.join(vault, '04-Knowledge'));
+  const c = new CuratorVault(config), args = { operation_id: op, path: source, destination, expected_sha256: hash(original), rationale: '분류' };
+  c.recordReview({ operation_id: op, path: source, expected_sha256: hash(original), rationale: '검토' });
+  const moved = c.moveNote(args);
+  const organized = c.organizeNote({ operation_id: op, path: destination, expected_sha256: moved.sha256, new_body: '# 정리\n\n검증된 고유 내용.\n<!-- hermes-memory:' + 'a'.repeat(64) + ' -->\n', rationale: '정리' });
+  assert.deepEqual(c.moveNote(args), moved);
+  const done = c.finalizeReview({ operation_id: op, path: destination, expected_sha256: organized.sha256 });
+  assert.equal(done.status, 'curated');
+  assert.deepEqual(c.moveNote(args), moved);
+  assert.deepEqual(c.finalizeReview({ operation_id: op, path: destination, expected_sha256: done.sha256 }), done);
+  assert.match(fs.readFileSync(path.join(vault, destination), 'utf8'), /# 정리/u);
+});
+
 test('incomplete move cannot be finalized using independently recorded destination review', t => {
   const { config, put, vault } = fixture(t), source = '00-Inbox/topic.md', destination = '04-Knowledge/topic.md', original = sample(), op = 'move-interrupted';
   put(source, original); fs.mkdirSync(path.join(vault, '04-Knowledge'));

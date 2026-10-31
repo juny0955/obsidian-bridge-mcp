@@ -246,7 +246,7 @@ export class CuratorVault extends ReviewerVault {
     const verifyEvidence = expected => {
       check(fs.existsSync(evidenceFile), 'Move evidence missing');
       const actual = this.readJson(evidenceFile);
-      check(Object.entries(expected).every(([key, value]) => key === 'stage' && journal?.stage === 'committed' ? ['organized', 'finalizing', 'curated'].includes(actual.stage) : actual[key] === value), 'Move evidence conflict; manual recovery required');
+      check(Object.entries(expected).every(([key, value]) => journal?.stage === 'committed' && key === 'stage' ? ['organized', 'finalizing', 'curated'].includes(actual.stage) : journal?.stage === 'committed' && key === 'organized_sha256' ? /^[a-f0-9]{64}$/u.test(actual[key]) : actual[key] === value), 'Move evidence conflict; manual recovery required');
       return actual;
     };
     if (journal && ['source_removed', 'committed'].includes(journal.stage)) {
@@ -255,7 +255,7 @@ export class CuratorVault extends ReviewerVault {
       if (journal.stage === 'source_removed' && !fs.existsSync(evidenceFile)) this.writeJson(evidenceFile, expected);
       const actual = verifyEvidence(expected);
       const currentSha = this.vault.read(destination).sha256;
-      check(currentSha === sha || (journal.stage === 'committed' && ['finalizing', 'curated'].includes(actual.stage) && currentSha === actual.curated_sha256), 'Move retry requires manual recovery');
+      check(journal.stage === 'source_removed' ? currentSha === sha : actual.stage === 'curated' ? currentSha === actual.curated_sha256 : currentSha === actual.organized_sha256 || (actual.stage === 'finalizing' && currentSha === actual.curated_sha256), 'Move retry requires manual recovery');
       if (journal.stage === 'source_removed') this.writeJsonReplace(file, { ...operation, stage: 'committed' });
       return result;
     }
@@ -473,7 +473,7 @@ export class CuratorVault extends ReviewerVault {
       const journalFile = this.operationPath(op);
       check(record.move_operation_id === op && fs.existsSync(journalFile), 'Move completion journal missing');
       const journal = this.readJson(journalFile);
-      check(journal.type === 'move' && journal.stage === 'committed' && journal.operation_id === op && journal.destination === relative && journal.source_path === record.moved_from && journal.source_sha256 === record.organized_sha256 && !fs.existsSync(this.vault.target(journal.source_path)), 'Move not committed; manual recovery required');
+      check(journal.type === 'move' && journal.stage === 'committed' && journal.operation_id === op && journal.destination === relative && journal.source_path === record.moved_from && journal.source_sha256 === record.sha256 && !fs.existsSync(this.vault.target(journal.source_path)), 'Move not committed; manual recovery required');
     }
     if (record.stage === 'curated' && /^status: curated$/mu.test(note.content)) return { status: 'curated', path: relative, sha256: note.sha256 };
     if (record.stage === 'finalizing' && /^status: curated$/mu.test(note.content)) {
