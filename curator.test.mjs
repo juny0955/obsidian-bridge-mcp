@@ -365,6 +365,16 @@ test('move link scan includes hidden uppercase Markdown and canvas', t => {
 });
 
 
+test('move rejects partial path wikilinks to nested inbox notes', t => {
+  const { config, put, vault } = fixture(t), source = '00-Inbox/sub/topic.md', destination = '04-Knowledge/topic.md', original = sample();
+  put(source, original); put('04-Knowledge/ref.md', '[[sub/topic#heading|alias]]');
+  const c = new CuratorVault(config), op = 'partial-link';
+  c.recordReview({ operation_id: op, path: source, expected_sha256: hash(original), rationale: '검토' });
+  assert.throws(() => c.moveNote({ operation_id: op, path: source, destination, expected_sha256: hash(original), rationale: '분류' }), /link scan/iu);
+  assert.equal(fs.readFileSync(path.join(vault, source), 'utf8'), original);
+  assert.equal(fs.existsSync(path.join(vault, destination)), false);
+});
+
 test('Curator move MCP exposes and executes reviewed move', t => {
   const {config, put, vault} = fixture(t), source='00-Inbox/topic.md', destination='04-Knowledge/topic.md', original=sample(), op='mcp-move';
   put(source, original); fs.mkdirSync(path.join(vault, '04-Knowledge'));
