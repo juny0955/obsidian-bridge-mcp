@@ -45,6 +45,29 @@ test('move gates reject omitted, false and non-boolean flags before mutation', t
   }
 });
 
+test('move refuses occupied destinations and stale source hashes without altering files', t => {
+  for (const scenario of ['occupied', 'stale']) {
+    const f = fixture(t), sourceFile = path.join(f.vault, f.source), destFile = path.join(f.vault, f.destination);
+    if (scenario === 'occupied') fs.writeFileSync(destFile, 'existing destination');
+    else fs.writeFileSync(sourceFile, f.original + 'external edit');
+    assert.throws(() => f.curator.moveNote(f.args), /occupied|changed/iu);
+    assert.equal(fs.readFileSync(sourceFile, 'utf8'), f.original + (scenario === 'stale' ? 'external edit' : ''));
+    if (scenario === 'occupied') assert.equal(fs.readFileSync(destFile, 'utf8'), 'existing destination');
+    else assert.equal(fs.existsSync(destFile), false);
+  }
+});
+
+test('move rejects reusing an operation ID with different arguments', t => {
+  const f = fixture(t);
+  f.curator.moveNote(f.args);
+  for (const changes of [{ rationale: '다른 분류' }, { destination: '02-Projects/topic.md' }, { expected_sha256: '0'.repeat(64) }]) {
+    fs.mkdirSync(path.join(f.vault, '02-Projects'), { recursive: true });
+    assert.throws(() => f.curator.moveNote({ ...f.args, ...changes }), /conflict/iu);
+    assert.equal(fs.readFileSync(path.join(f.vault, f.destination), 'utf8'), f.original);
+    assert.equal(fs.existsSync(path.join(f.vault, f.source)), false);
+  }
+});
+
 test('move rejects source and destination directory symlinks', t => {
   for (const side of ['source', 'destination']) {
     const f = fixture(t), outside = path.join(f.root, 'outside'); fs.mkdirSync(outside);
