@@ -382,3 +382,15 @@ test('Curator move MCP exposes and executes reviewed move', t => {
   assert.equal(replies[5].result.isError, true);
   assert.match(fs.readFileSync(path.join(vault,destination),'utf8'), /^status: curated$/mu);
 });
+
+
+test('abandoned lock remains fail closed until manually recovered', t => {
+  const {config,put} = fixture(t), relative='00-Inbox/topic.md', original=sample();
+  put(relative,original); const c=new CuratorVault(config);
+  const lock=path.join(config.stateDir, `${hash(relative)}.lock`);
+  fs.mkdirSync(lock);
+  assert.throws(() => c.recordReview({operation_id:'lock-test',path:relative,expected_sha256:hash(original),rationale:'검토'}), /modified/u);
+  assert.ok(fs.statSync(lock).isDirectory());
+  fs.rmdirSync(lock);
+  assert.equal(c.recordReview({operation_id:'lock-test',path:relative,expected_sha256:hash(original),rationale:'검토'}).status, 'reviewed');
+});
