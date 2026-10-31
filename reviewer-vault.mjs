@@ -24,16 +24,19 @@ export class ReviewerVault {
     check(this.config.enabled === true, 'Reviewer is disabled');
     const source = this.vault.target(args.path);
     const destination = this.vault.target(args.destination);
-    check(args.path === args.destination && !args.path.startsWith('00-Inbox/'), 'Invalid destination');
+    check(/^(?:01-Journal|02-Projects|03-Areas|04-Knowledge|05-Resources)\//u.test(args.destination) &&
+      path.posix.basename(args.path) === path.posix.basename(args.destination) &&
+      (args.path !== args.destination || !args.path.startsWith('00-Inbox/')), 'Invalid destination');
     const key = hash([args.path, args.expected_sha256, args.destination].join('\0'));
     const reviewerDir = path.join(this.config.stateDir, 'reviewer');
     fs.mkdirSync(reviewerDir, { recursive: true, mode: 0o700 });
     const record = path.join(reviewerDir, `${key}.json`);
     const backupDir = path.join(reviewerDir, 'backups');
-    const lock = path.join(this.config.stateDir, `${hash(args.path)}.lock`);
-    fs.mkdirSync(lock, { mode: 0o700 });
-    let temp;
+    const locks = [...new Set([args.path, args.destination])].map(relative => path.join(this.config.stateDir, `${hash(relative)}.lock`)).sort();
+    const acquired = [];
+    let temp, createdDestination = false, removedSource = false;
     try {
+      for (const lock of locks) { fs.mkdirSync(lock, { mode: 0o700 }); acquired.push(lock); }
       if (fs.existsSync(record)) {
         const previous = JSON.parse(fs.readFileSync(record, 'utf8'));
         check(previous.rationale === args.rationale && previous.path === args.destination &&
@@ -43,6 +46,17 @@ export class ReviewerVault {
       }
       const before = this.vault.read(args.path);
       check(before.sha256 === args.expected_sha256, 'Note changed: read again');
+      if (source !== destination) {
+        check(!fs.existsSync(destination), 'Destination already exists');
+        for (const relative of this.vault.notes()) {
+          if (relative !== args.path) check(path.posix.basename(relative) !== path.posix.basename(args.path), 'Duplicate basename makes move unsafe');
+          const content = this.vault.read(relative).content;
+          check(!content.includes(args.path) && !content.includes(args.path.slice(0, -3)) &&
+            !content.includes(encodeURI(args.path)) && !/!?\[[^\]\n]*\]\((?!https?:\/\/|mailto:|#)[^)]*\)/u.test(content),
+          'Path or relative link makes move unsafe');
+        }
+        fs.mkdirSync(path.dirname(destination), { recursive: true });
+      }
       const front = before.content.match(/^(---\r?\n)([\s\S]*?)(\r?\n---(?:\r?\n|$))/u);
       check(front, 'Missing frontmatter');
       check((front[2].match(/^status:.*$/gmu) ?? []).length === 1 && /^status: review$/mu.test(front[2]), 'Status must be exactly review');
@@ -53,18 +67,34 @@ export class ReviewerVault {
       const content = front[1] + metadata + front[3] + before.content.slice(front[0].length);
       fs.mkdirSync(backupDir, { recursive: true, mode: 0o700 });
       fs.writeFileSync(path.join(backupDir, `${key}.md`), before.content, { flag: 'wx', mode: 0o600 });
-      temp = `${source}.${randomUUID()}.tmp`;
+      temp = `${destination}.${randomUUID()}.tmp`;
       fs.writeFileSync(temp, content, { flag: 'wx', mode: 0o600 });
-      fs.renameSync(temp, destination);
-      temp = null;
+      if (source === destination) { fs.renameSync(temp, destination); temp = null; }
+      else { fs.linkSync(temp, destination); createdDestination = true; }
       const after = this.vault.read(args.destination);
       check(after.content === content, 'Review readback mismatch');
+      if (source !== destination) {
+        check(this.vault.read(args.path).sha256 === before.sha256, 'Source changed during review');
+        fs.unlinkSync(source);
+        removedSource = true;
+      }
       const result = { status: 'curated', path: args.destination, sha256: after.sha256 };
       fs.writeFileSync(record, JSON.stringify({ ...result, rationale: args.rationale }), { flag: 'wx', mode: 0o600 });
       return result;
+    } catch (error) {
+      if (createdDestination && !removedSource && fs.existsSync(source) && fs.existsSync(destination) &&
+          fs.statSync(destination).ino === fs.statSync(temp).ino) fs.unlinkSync(destination);
+      try {
+        const errors = path.join(reviewerDir, 'errors');
+        fs.mkdirSync(errors, { recursive: true, mode: 0o700 });
+        fs.writeFileSync(path.join(errors, `${key}-${randomUUID()}.json`),
+          JSON.stringify({ key, path: args.path, destination: args.destination, error: error.code ?? error.message, at: new Date().toISOString(), manualRecovery: removedSource }),
+          { flag: 'wx', mode: 0o600 });
+      } catch { /* Preserve the original failure; backup remains available. */ }
+      throw error;
     } finally {
       if (temp && fs.existsSync(temp)) fs.unlinkSync(temp);
-      fs.rmdirSync(lock);
+      acquired.reverse().forEach(lock => fs.rmdirSync(lock));
     }
   }
 }
