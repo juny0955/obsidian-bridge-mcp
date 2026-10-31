@@ -35,6 +35,16 @@ test('move rejects invalid source, destination, rename and traversal paths witho
   }
 });
 
+test('move gates reject omitted, false and non-boolean flags before mutation', t => {
+  for (const overrides of [{ allowMoves: undefined }, { allowMoves: false }, { allowMoves: 'true' }, { enabled: false }, { enabled: undefined }, { role: 'reviewer' }]) {
+    const f = fixture(t);
+    const c = new CuratorVault({ ...f.config, ...overrides });
+    assert.throws(() => c.moveNote(f.args), /disabled/iu);
+    assert.equal(fs.readFileSync(path.join(f.vault, f.source), 'utf8'), f.original);
+    assert.equal(fs.existsSync(path.join(f.vault, f.destination)), false);
+  }
+});
+
 test('move rejects source and destination directory symlinks', t => {
   for (const side of ['source', 'destination']) {
     const f = fixture(t), outside = path.join(f.root, 'outside'); fs.mkdirSync(outside);
