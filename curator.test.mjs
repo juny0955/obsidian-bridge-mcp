@@ -308,6 +308,7 @@ test('move reviewed inbox note without changing bytes then finalize destination'
   const done = curator.finalizeReview({ operation_id: op, path: destination, expected_sha256: moved.sha256 });
   assert.equal(done.status, 'curated');
   assert.match(fs.readFileSync(path.join(vault, destination), 'utf8'), /^status: curated$/mu);
+  assert.deepEqual(curator.moveNote({ operation_id: op, path: source, destination, expected_sha256: hash(original), rationale: '지식으로 분류' }), moved);
 });
 
 test('incomplete move cannot be finalized using independently recorded destination review', t => {

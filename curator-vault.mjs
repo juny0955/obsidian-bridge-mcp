@@ -236,13 +236,16 @@ export class CuratorVault extends ReviewerVault {
     const verifyEvidence = expected => {
       check(fs.existsSync(evidenceFile), 'Move evidence missing');
       const actual = this.readJson(evidenceFile);
-      check(Object.entries(expected).every(([key, value]) => actual[key] === value), 'Move evidence conflict; manual recovery required');
+      check(Object.entries(expected).every(([key, value]) => key === 'stage' && journal?.stage === 'committed' ? ['organized', 'finalizing', 'curated'].includes(actual.stage) : actual[key] === value), 'Move evidence conflict; manual recovery required');
+      return actual;
     };
     if (journal && ['source_removed', 'committed'].includes(journal.stage)) {
-      check(!fs.existsSync(sourceFile) && this.vault.read(destination).sha256 === sha, 'Move retry requires manual recovery');
+      check(!fs.existsSync(sourceFile), 'Move retry requires manual recovery');
       const expected = makeEvidence();
       if (journal.stage === 'source_removed' && !fs.existsSync(evidenceFile)) this.writeJson(evidenceFile, expected);
-      verifyEvidence(expected);
+      const actual = verifyEvidence(expected);
+      const currentSha = this.vault.read(destination).sha256;
+      check(currentSha === sha || (journal.stage === 'committed' && ['finalizing', 'curated'].includes(actual.stage) && currentSha === actual.curated_sha256), 'Move retry requires manual recovery');
       if (journal.stage === 'source_removed') this.writeJsonReplace(file, { ...operation, stage: 'committed' });
       return result;
     }
