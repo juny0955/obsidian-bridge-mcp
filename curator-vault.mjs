@@ -41,6 +41,15 @@ const syncDirectory = directory => {
   try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
 };
 
+const durableDirectory = directory => {
+  if (!fs.existsSync(directory)) {
+    durableDirectory(path.dirname(directory));
+    try { fs.mkdirSync(directory, { mode: 0o700 }); } catch (error) { if (error.code !== 'EEXIST') throw error; }
+  }
+  check(!fs.lstatSync(directory).isSymbolicLink() && fs.statSync(directory).isDirectory(), 'State directory unsafe');
+  syncDirectory(path.dirname(directory));
+};
+
 export class CuratorVault extends ReviewerVault {
   constructor(config, { now = () => new Date() } = {}) {
     super({ ...config, client: 'hermes' });
@@ -49,7 +58,7 @@ export class CuratorVault extends ReviewerVault {
     this.trashRetentionDays = 15;
     this.curatorRoot = path.join(this.config.stateDir, 'curator');
     if (fs.existsSync(this.curatorRoot)) check(!fs.lstatSync(this.curatorRoot).isSymbolicLink(), 'Curator state path is unsafe');
-    else fs.mkdirSync(this.curatorRoot, { recursive: true, mode: 0o700 });
+    else durableDirectory(this.curatorRoot);
   }
   withLocks(paths, work) {
     const locks = [...new Set(paths)].map(relative => path.join(this.config.stateDir, `${hash(relative)}.lock`)).sort();
@@ -67,13 +76,13 @@ export class CuratorVault extends ReviewerVault {
   operationPath(op) { return path.join(this.curatorRoot, 'operations', `${operationId(op)}.json`); }
   readJson(file) { return JSON.parse(fs.readFileSync(file, 'utf8')); }
   writeJson(file, value) {
-    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+    durableDirectory(path.dirname(file));
     const temp = `${file}.${randomUUID()}.tmp`;
     durableWrite(temp, JSON.stringify(value, null, 2) + '\n');
     try { fs.linkSync(temp, file); syncDirectory(path.dirname(file)); } finally { fs.unlinkSync(temp); }
   }
   writeJsonReplace(file, value) {
-    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+    durableDirectory(path.dirname(file));
     const temp = `${file}.${randomUUID()}.tmp`;
     durableWrite(temp, JSON.stringify(value, null, 2) + '\n');
     fs.renameSync(temp, file);
@@ -148,7 +157,8 @@ export class CuratorVault extends ReviewerVault {
   }
   backup(op, relative, bytes) {
     const dir = path.join(this.curatorRoot, 'backups', op);
-    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    durableDirectory(dir);
+    syncDirectory(path.dirname(dir));
     const file = path.join(dir, `${hash(relative)}-${hash(bytes)}.md`);
     if (!fs.existsSync(file)) { durableWrite(file, bytes); syncDirectory(dir); }
     else check(hash(fs.readFileSync(file)) === hash(bytes), 'Backup conflicts with existing operation');

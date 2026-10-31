@@ -394,3 +394,15 @@ test('abandoned lock remains fail closed until manually recovered', t => {
   fs.rmdirSync(lock);
   assert.equal(c.recordReview({operation_id:'lock-test',path:relative,expected_sha256:hash(original),rationale:'검토'}).status, 'reviewed');
 });
+
+
+test('move durably creates operation directory before deleting source', t => {
+  const {config,put,vault} = fixture(t), source='00-Inbox/topic.md', destination='04-Knowledge/topic.md', original=sample(), op='durable-dir';
+  put(source,original); fs.mkdirSync(path.join(vault,'04-Knowledge'));
+  const c=new CuratorVault(config); c.recordReview({operation_id:op,path:source,expected_sha256:hash(original),rationale:'검토'});
+  const sync=fs.fsyncSync, unlink=fs.unlinkSync, synced=[];
+  fs.fsyncSync = fd => { synced.push(fs.readlinkSync(`/proc/self/fd/${fd}`)); return sync(fd); };
+  fs.unlinkSync = file => { if (file === path.join(vault,source)) assert.ok(synced.includes(path.join(config.stateDir,'curator')), 'operations parent not synced'); return unlink(file); };
+  try { c.moveNote({operation_id:op,path:source,destination,expected_sha256:hash(original),rationale:'분류'}); }
+  finally { fs.fsyncSync=sync; fs.unlinkSync=unlink; }
+});
