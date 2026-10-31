@@ -85,6 +85,29 @@ test('operation lock excludes another process moving different paths with the sa
   assert.equal(f.curator.moveNote(second).status, 'moved');
 });
 
+test('move resumes after source removal when evidence or commit journal write fails', t => {
+  for (const point of ['evidence', 'commit']) {
+    const f = fixture(t), c = f.curator;
+    const write = c.writeJson.bind(c), replace = c.writeJsonReplace.bind(c);
+    c.writeJson = (file, value) => {
+      if (point === 'evidence' && value.move_operation_id === f.args.operation_id) throw new Error('injected evidence failure');
+      return write(file, value);
+    };
+    c.writeJsonReplace = (file, value) => {
+      if (point === 'commit' && value.stage === 'committed') throw new Error('injected commit failure');
+      return replace(file, value);
+    };
+    assert.throws(() => c.moveNote(f.args), /injected/iu);
+    assert.equal(fs.existsSync(path.join(f.vault, f.source)), false);
+    assert.equal(fs.readFileSync(path.join(f.vault, f.destination), 'utf8'), f.original);
+    const resumed = new CuratorVault(f.config);
+    const result = resumed.moveNote(f.args);
+    assert.equal(result.status, 'moved');
+    assert.deepEqual(resumed.moveNote(f.args), result);
+    assert.equal(resumed.finalizeReview({ operation_id: f.args.operation_id, path: f.destination, expected_sha256: f.args.expected_sha256 }).status, 'curated');
+  }
+});
+
 test('move rejects source and destination directory symlinks', t => {
   for (const side of ['source', 'destination']) {
     const f = fixture(t), outside = path.join(f.root, 'outside'); fs.mkdirSync(outside);
