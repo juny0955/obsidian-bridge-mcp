@@ -322,3 +322,18 @@ test('incomplete move cannot be finalized using independently recorded destinati
   assert.throws(() => curator.finalizeReview({operation_id:op, path:destination, expected_sha256:hash(original)}), /move|journal/iu);
   assert.equal(fs.readFileSync(path.join(vault,destination),'utf8'), original);
 });
+
+test('interrupted verified destination retains copies and refuses automatic deletion', t => {
+  const { config, put, vault } = fixture(t), source = '00-Inbox/topic.md', destination = '04-Knowledge/topic.md', original = sample(), op = 'move-fault';
+  put(source, original); fs.mkdirSync(path.join(vault, '04-Knowledge'));
+  const curator = new CuratorVault(config), args = {operation_id:op, path:source, destination, expected_sha256:hash(original), rationale:'분류'};
+  curator.recordReview({operation_id:op, path:source, expected_sha256:hash(original), rationale:'검토'});
+  const write = curator.writeJsonReplace.bind(curator);
+  curator.writeJsonReplace = (file, value) => { write(file, value); if (value.stage === 'destination_verified') throw new Error('injected'); };
+  assert.throws(() => curator.moveNote(args), /injected/u);
+  curator.writeJsonReplace = write;
+  assert.throws(() => curator.moveNote(args), /manual recovery/iu);
+  assert.equal(fs.readFileSync(path.join(vault,source),'utf8'), original);
+  assert.equal(fs.readFileSync(path.join(vault,destination),'utf8'), original);
+  assert.equal(fs.readFileSync(path.join(config.stateDir,'curator/backups',op,`${hash(source)}-${hash(original)}.md`),'utf8'), original);
+});
