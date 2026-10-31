@@ -19,6 +19,31 @@ export function turnKey(args, client = 'codex') {
 export function day() {
   return new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 }
+const normalizeBody = body => body.replace(/\r\n?/gu, '\n').trim();
+function recordedBodyHashes(content) {
+  const body = normalizeBody(content).replace(/^---\n[\s\S]*?\n---(?:\n|$)/u, '');
+  const blocks = [];
+  let lines = [], fence = null, afterMarker = false;
+  const collect = () => {
+    let block = normalizeBody(lines.join('\n'));
+    if (afterMarker) block = block.replace(/^## (?:Codex|Hermes) 추가 기록 · \d{4}-\d{2}-\d{2}\n+/u, '');
+    if (block) blocks.push(hash(normalizeBody(block)));
+    lines = [];
+  };
+  for (const line of body.split('\n')) {
+    const delimiter = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/u);
+    if (delimiter) {
+      if (fence === null) fence = delimiter[1];
+      else if (delimiter[1][0] === fence[0] && delimiter[1].length >= fence.length && !delimiter[2].trim()) fence = null;
+    }
+    if (fence === null && /^<!-- (?:codex|hermes)-memory:[a-f0-9]{64} -->[ \t]*$/u.test(line)) {
+      collect();
+      afterMarker = true;
+    } else lines.push(line);
+  }
+  collect();
+  return blocks;
+}
 export class Vault {
   constructor(config) {
     this.config = config;
@@ -51,7 +76,7 @@ export class Vault {
     const results = [];
     const walk = relative => {
       const target = path.join(this.root, relative);
-      if (!fs.existsSync(target)) return;
+      if (!fs.existsSync(target) || fs.lstatSync(target).isSymbolicLink()) return;
       for (const item of fs.readdirSync(target, { withFileTypes: true })) {
         if (item.name.startsWith('.') || item.isSymbolicLink()) continue;
         const child = `${relative}/${item.name}`;
@@ -87,18 +112,26 @@ export class Vault {
     check(this.config.enabled, 'Obsidian auto-save is disabled');
     const key = turnKey(args, this.client);
     const target = this.target(args.path);
-    const marker = `<!-- ${this.client}-memory:${hash(`${key}\0${args.path}`)} -->`;
+    const legacyMarker = `<!-- ${this.client}-memory:${hash(`${key}\0${args.path}`)} -->`;
     const body = text(args.body, 'body');
+    check(['create', 'append'].includes(args.operation), 'Use create or append');
     check(!/\{\{[^}]+\}\}/u.test(body), 'Resolve template placeholders first');
     check(!/-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:sk-proj-|ghp_|github_pat_|xox[baprs]-)[A-Za-z0-9_-]{12,}/u.test(body), 'Possible credential: remove before saving');
     const lock = path.join(this.config.stateDir, `${hash(args.path)}.lock`);
-    fs.mkdirSync(lock, { mode: 0o700 });
+    const bodyHash = hash(normalizeBody(body));
+    const marker = `<!-- ${this.client}-memory:${hash(`${key}\0${args.path}\0${bodyHash}`)} -->`;
+    const contentLock = path.join(this.config.stateDir, `${hash(`${this.root}\0${bodyHash}`)}.content.lock`);
+    const acquired = [];
     try {
+      for (const directory of [contentLock, lock]) {
+        try { fs.mkdirSync(directory, { mode: 0o700 }); }
+        catch (error) { if (error.code === 'EEXIST') throw new Error('Note or matching content is being saved; search and read again before retrying'); throw error; }
+        acquired.push(directory);
+      }
       const prior = fs.existsSync(target) ? this.read(args.path).content : null;
-      if (prior?.includes(marker)) return this.finish(args, 'saved', args.path);
+      if (prior?.includes(marker) || prior?.includes(legacyMarker)) return this.finish(args, 'saved', args.path);
       let content;
       if (args.operation === 'create') {
-        check(prior === null, 'Note exists; read it and append only new information');
         check(types.includes(args.type), 'Unknown note type');
         const tags = args.tags ?? [];
         const related = args.related ?? [];
@@ -106,6 +139,10 @@ export class Vault {
         check(Array.isArray(related) && related.every(link => typeof link === 'string' && /^\[\[[^\]\n]+\]\]$/u.test(link)), 'Invalid related links');
         const notes = this.notes();
         check(related.every(link => notes.some(note => note === `${link.slice(2, -2)}.md` || path.basename(note, '.md') === link.slice(2, -2))), 'Related note does not exist');
+        if (prior !== null && recordedBodyHashes(prior).includes(bodyHash)) return this.finish(args, 'saved', args.path);
+        check(prior === null, 'Note exists; search and compare before choosing another filename or appending a genuine supplement');
+        const duplicate = notes.find(relative => recordedBodyHashes(this.read(relative).content).includes(bodyHash));
+        if (duplicate) return this.finish(args, 'saved', duplicate);
         content = `---\ntype: ${args.type}\nstatus: review\ncreated: ${day()}\nupdated: ${day()}\ntags: ${JSON.stringify([...new Set(tags)])}\nrelated: ${JSON.stringify([...new Set(related)])}\nsource: ${JSON.stringify(`${this.clientName} session ${args.session_id}`)}\n---\n\n${body.trim()}\n\n${marker}\n`;
         fs.mkdirSync(path.dirname(target), { recursive: true });
         fs.writeFileSync(target, content, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
@@ -114,6 +151,7 @@ export class Vault {
         check(prior !== null, 'Read an existing note before appending');
         check(args.expected_sha256 === hash(prior), 'Note changed: read the latest version and retry');
         check(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/u.test(prior), 'Existing note has no frontmatter; review manually');
+        if (recordedBodyHashes(prior).includes(bodyHash)) return this.finish(args, 'saved', args.path);
         const end = prior.indexOf('\n---', 4);
         let front = prior.slice(0, end);
         front = /^updated:.*$/mu.test(front) ? front.replace(/^updated:.*$/mu, `updated: ${day()}`) : `${front}\nupdated: ${day()}`;
@@ -123,6 +161,6 @@ export class Vault {
         fs.renameSync(temporary, target);
       }
       return this.finish(args, 'saved', args.path);
-    } finally { fs.rmdirSync(lock); }
+    } finally { acquired.reverse().forEach(directory => fs.rmdirSync(directory)); }
   }
 }

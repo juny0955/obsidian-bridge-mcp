@@ -52,6 +52,8 @@ Hermes 설정의 `mcp_servers.obsidian_brain.enabled: true`는 서버 연결을 
 
 Hermes 지침은 매 턴 훅의 `context`에 포함됩니다. `global-instructions.md`의 Codex 전용 블록을 Hermes 전역 지침으로 설치할 필요는 없습니다. 볼트 내부 `AGENTS.md`는 `get_context`가 읽는 볼트 규칙으로 계속 필요합니다.
 
+Codex와 Hermes는 같은 Writer 정책을 사용합니다. [볼트 규칙 배포 원본](vault-rules/)을 기존 볼트 규칙과 비교해 적용하고, 저장 위치와 create/append 판단은 `get_context`가 반환하는 `NOTE_RULES.md`를 따르세요. 별도 Hermes 분류 정책이나 Organizer는 추가하지 않습니다. 코드·규칙 변경 후 실행 중 MCP를 재연결하여 도구 설명과 코드를 다시 로드합니다. 훅 명령이 바뀌지 않았다면 기존 승인 항목은 보존합니다.
+
 ## 3. 훅 승인과 활성화
 
 설정을 검토한 뒤 같은 프로필·서비스 계정으로 대화형 `hermes chat`을 실행하여 `pre_llm_call`, `on_session_end` 각각의 **정확한 명령 문자열**을 승인합니다. Gateway는 새 훅에 대한 승인 질문을 표시하지 않으므로 먼저 승인해야 합니다. 모든 훅을 자동 승인하는 설정은 필요하지 않습니다.
