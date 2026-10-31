@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { CuratorVault } from './curator-vault.mjs';
 import { hash } from './vault.mjs';
 
@@ -66,6 +67,22 @@ test('move rejects reusing an operation ID with different arguments', t => {
     assert.equal(fs.readFileSync(path.join(f.vault, f.destination), 'utf8'), f.original);
     assert.equal(fs.existsSync(path.join(f.vault, f.source)), false);
   }
+});
+
+test('operation lock excludes another process moving different paths with the same ID', t => {
+  const f = fixture(t);
+  const second = { ...f.args, path: '00-Inbox/other.md', destination: '04-Knowledge/other.md' };
+  f.put(second.path, f.original);
+  f.curator.recordReview({ operation_id: second.operation_id, path: second.path, expected_sha256: second.expected_sha256, rationale: '검토' });
+  const script = `import { CuratorVault } from ${JSON.stringify(new URL('./curator-vault.mjs', import.meta.url).href)}; const c = new CuratorVault(JSON.parse(process.argv[1])); try { c.moveNote(JSON.parse(process.argv[2])); process.exit(2); } catch (e) { console.log(e.message); }`;
+  f.curator.withLocks([`\0operation:${f.args.operation_id}`], () => {
+    const child = spawnSync(process.execPath, ['--input-type=module', '-e', script, JSON.stringify(f.config), JSON.stringify(second)], { encoding: 'utf8', timeout: 10000 });
+    assert.equal(child.status, 0, child.stderr);
+    assert.match(child.stdout, /modified/iu);
+  });
+  assert.equal(fs.readFileSync(path.join(f.vault, second.path), 'utf8'), f.original);
+  assert.equal(fs.existsSync(path.join(f.vault, second.destination)), false);
+  assert.equal(f.curator.moveNote(second).status, 'moved');
 });
 
 test('move rejects source and destination directory symlinks', t => {
