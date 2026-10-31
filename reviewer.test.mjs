@@ -230,8 +230,9 @@ test('MCP role isolation exposes Reviewer tools but neither role can invoke the 
   assert.equal(replies[1].result.tools[3].annotations.destructiveHint, true);
   assert.equal(replies[2].result.isError, true);
   assert.equal(replies[3].result.isError, false);
-  assert.equal(replies[4].result.isError, false);
+  assert.equal(replies[4].result.isError, true);
   assert.equal(replies[5].result.isError, true);
+  assert.equal(new ReviewerVault(config).vault.read('04-Knowledge/주제.md').content, sample());
   assert.ok(!replies[0].result.instructions.includes('turn_id'));
   const writer = run('./server.mjs', { OBSIDIAN_BRAIN_CONFIG: writerConfig });
   assert.equal(writer.status, 0, writer.stderr);

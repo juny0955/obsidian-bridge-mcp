@@ -19,6 +19,10 @@ Codex와 Hermes에서 유용한 지식과 결정을 Obsidian 볼트에 기록하
 | `hermes.test.mjs` | Hermes 페이로드, 상태 분리, subprocess 연동 테스트 |
 | `config.example.json` | 로컬 설정을 만들기 위한 예제 |
 | `config.hermes.example.json` | VPS Hermes용 비활성 기본 설정 |
+| `config.curator.example.json` | 별도 Curator MCP의 비활성 기본 설정 |
+| `curator-server.mjs` / `curator-vault.mjs` | 리뷰, 단계별 본문 정리, 통합, 복원 가능한 휴지통을 담당하는 Curator |
+| `curator-policy.md` | Curator 역할·보존·삭제 승인 정책 |
+| `curator.test.mjs` | Curator MCP의 안전성·워크플로 테스트 |
 | `global-instructions.md` | Codex 지침 설치 안내와 복사용 지침 |
 | `vault-rules/` | Codex·Hermes 공용 볼트 규칙의 배포 원본 |
 
@@ -58,11 +62,48 @@ obsidian-vault/
 - `NOTE_RULES.md`: 분류·생성·추가·연결 규칙
 - `Templates/`: 노트 유형별 Markdown 템플릿. 위의 `Knowledge.md`는 예시이며 폴더 안의 `.md` 파일을 모두 읽습니다.
 
-Writer의 저장 위치와 생성·보완 판단은 볼트의 `99-System/AI/NOTE_RULES.md`가 단일 기준입니다. `AGENTS.md`와 클라이언트 지침은 이 문서를 참조합니다. `vault-rules/`는 해당 두 문서의 배포 원본이며 실행 중 별도 정책으로 읽지 않습니다. 설치 시 기존 볼트 규칙을 백업·비교하고 필요한 변경을 병합하세요. 기존 `PROPERTY_SCHEMA.md`와 템플릿은 유지합니다. Organizer는 아직 구현하지 않습니다.
+Writer의 저장 위치와 생성·보완 판단은 볼트의 `99-System/AI/NOTE_RULES.md`가 단일 기준입니다. `AGENTS.md`와 클라이언트 지침은 이 문서를 참조합니다. `vault-rules/`는 Writer 규칙의 배포 원본입니다. 설치 시 기존 볼트 규칙을 백업·비교하고 필요한 변경을 승인받아 병합하세요. 기존 `PROPERTY_SCHEMA.md`와 템플릿은 유지합니다. 별도 Curator MCP는 아래 절차와 저장소의 `curator-policy.md`를 따르며, 실제 볼트 규칙은 별도 승인·배포 전까지 변경하지 않습니다.
 
 검색과 노트 쓰기는 `00-Inbox`부터 `05-Resources`까지 위에 나열한 여섯 폴더로 제한됩니다. 없는 노트 폴더는 첫 저장 시 생성됩니다. 규칙·템플릿은 읽기 대상으로 사용하고, 이 도구로 수정하지 않습니다.
 
 새 노트에는 `type`, `status: review`, `created`, `updated`, `tags`, `related`, `source` 속성을 자동으로 붙입니다. 허용하는 `type`은 `knowledge`, `project`, `decision`, `troubleshooting`, `thought`, `journal`, `goal`, `resource`, `area`, `meeting`입니다. 볼트 규칙을 이 형식과 맞춰 준비하세요. 날짜는 현재 구현에서 `Asia/Seoul` 기준입니다.
+
+## Obsidian Curator MCP (옵션)
+
+Curator는 Writer와 별도의 stdio 프로세스입니다. 전용 Obsidian Curator 봇에만 연결하고 Writer의 자동 기록 훅은 연결하지 마세요. 같은 OS 사용자로 실행하면 서버 도구 목록 분리만으로 직접 파일 접근까지 격리되지는 않습니다.
+
+### 비활성 설정과 연결
+
+```sh
+cp -n config.curator.example.json config.curator.json
+```
+
+`config.curator.json`의 `vault`와 `stateDir`을 실제 절대 경로로 변경하세요. Writer와 잠금을 공유하도록 같은 호스트의 `stateDir`을 사용해야 합니다. 설정 예제는 `enabled`, `allowOrganization`, `allowMoves`, `allowTrash`를 모두 `false`로 둡니다. 실제 볼트에는 적용하지 말고 먼저 복제 볼트에서 검증하세요.
+
+Hermes MCP 연결 예시는 다음과 같습니다. 경로를 실제 절대 경로로 바꾸고, 기존 연결과 다른 **전용 봇 프로필**에만 등록합니다.
+
+```toml
+[mcp_servers.obsidian_curator]
+command = "/absolute/path/to/node"
+args = ["/absolute/path/to/obsidian-bridge-mcp/curator-server.mjs"]
+startup_timeout_sec = 15
+tool_timeout_sec = 60
+
+[mcp_servers.obsidian_curator.env]
+OBSIDIAN_CURATOR_CONFIG = "/absolute/path/to/obsidian-bridge-mcp/config.curator.json"
+```
+
+`OBSIDIAN_CURATOR_CONFIG`를 우선 사용합니다. 기존 Reviewer 연결을 옮기는 동안 `OBSIDIAN_REVIEWER_CONFIG`를 대신 사용할 수 있지만, 두 변수가 서로 다른 파일을 가리키면 시작이 거부됩니다. `reviewer-server.mjs`와 기존 `OBSIDIAN_REVIEWER_CONFIG` 이름은 호환 경로로 남아 있고, 구형 `complete_review` 쓰기 동작은 Curator 단계를 우회하지 못하도록 비활성화했습니다.
+
+### 작업 흐름과 운영 제한
+
+1. `get_context`로 볼트 규칙·스키마·템플릿과 Curator 정책을 읽고 `list_review_notes`의 커서 페이지를 모두 순회합니다. `skipped` 항목은 수동 확인하고 임의로 건너뛰지 않습니다.
+2. `read_note`로 최신 본문과 SHA256을 확인하고, 출처·날짜·고유 사실·실제 중복을 리뷰한 후 `record_review`를 호출합니다. 이것만으로 `status`는 바뀌지 않습니다.
+3. 필요한 경우에만 `organize_note`, `merge_notes`, `trash_note`를 사용합니다. 해시가 바뀌거나 링크·동기화가 모호하면 작업을 보류합니다. `99-System/Trash/<operation-id>/`로 이동된 원본은 복구할 수 있고, `restore_note`는 원래 경로가 비어 있을 때만 복원합니다.
+4. 변경 또는 정리가 모두 끝난 노트만 최신 SHA256으로 `finalize_review`를 호출해 `curated`로 표시합니다.
+5. 휴지통은 15일 보관합니다. `list_pending_deletions`와 `prepare_deletion_requests`는 만료 대기 항목과 불변 요청 ID를 확인·기록할 뿐, Discord로 전송하지 않습니다. Discord 연동은 범위 밖이며 이 서버에는 승인·영구 삭제 기능이 없으므로 만료 항목도 계속 보존합니다.
+
+`allowMoves`와 `allowTrash`를 켜도 운영 정지가 자동 검증되는 것은 아닙니다. Writer, Obsidian, 동기화 및 다른 프로세스의 쓰기가 실제로 중단된 상태를 별도로 확인할 수 없으면 이동·통합·휴지통 작업을 하지 마세요. 구체적인 복구·보존 불변식은 [`curator-policy.md`](curator-policy.md)와 [`reviewer-setup.md`](reviewer-setup.md)를 확인하세요. 이 문서는 설정 예시이며 이 변경으로 실볼트 규칙이나 실행 프로필은 수정되지 않습니다.
 
 ## 설치
 
@@ -183,7 +224,7 @@ Codex가 훅 검토를 요구하면 CLI의 `/hooks`에서 정의를 확인하고
 저장소 폴더에서 실행합니다. 테스트는 임시 볼트를 사용하며 개인 `config.json`이나 실제 볼트가 필요하지 않습니다.
 
 ```sh
-node --test bridge.test.mjs hermes.test.mjs
+node --test bridge.test.mjs hermes.test.mjs reviewer.test.mjs curator.test.mjs
 ```
 
 ## Claude Code 호환성
