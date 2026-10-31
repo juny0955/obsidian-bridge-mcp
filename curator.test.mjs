@@ -363,3 +363,22 @@ test('move link scan includes hidden uppercase Markdown and canvas', t => {
     assert.equal(fs.readFileSync(path.join(vault, source), 'utf8'), original);
   }
 });
+
+
+test('Curator move MCP exposes and executes reviewed move', t => {
+  const {config, put, vault} = fixture(t), source='00-Inbox/topic.md', destination='04-Knowledge/topic.md', original=sample(), op='mcp-move';
+  put(source, original); fs.mkdirSync(path.join(vault, '04-Knowledge'));
+  const call = (id, name, args) => ({jsonrpc:'2.0', id, method:'tools/call', params:{name, arguments:args}});
+  const replies = callServer(t, config, [
+    {jsonrpc:'2.0', id:1, method:'tools/list'},
+    call(2,'record_review',{operation_id:op,path:source,expected_sha256:hash(original),rationale:'검토'}),
+    call(3,'move_note',{operation_id:op,path:source,destination,expected_sha256:hash(original),rationale:'분류'}),
+    call(4,'read_note',{path:destination}),
+    call(5,'finalize_review',{operation_id:op,path:destination,expected_sha256:hash(original)}),
+    call(6,'move_note',{operation_id:op}),
+  ]);
+  assert.ok(replies[0].result.tools.some(item => item.name === 'move_note'));
+  for (const r of replies.slice(1,5)) assert.equal(r.result.isError, false, JSON.stringify(r));
+  assert.equal(replies[5].result.isError, true);
+  assert.match(fs.readFileSync(path.join(vault,destination),'utf8'), /^status: curated$/mu);
+});
