@@ -294,3 +294,155 @@ test('15-day expiry creates an approval request record but never permanently del
   assert.equal(updatedManifest.approval_request.status, 'not_sent_discord_out_of_scope');
   assert.equal(fs.existsSync(path.join(vault, '99-System/Trash/trash-old', path.basename(sourcePath))), true);
 });
+
+test('move reviewed inbox note without changing bytes then finalize destination', t => {
+  const { config, put, vault } = fixture(t);
+  const source = '00-Inbox/topic.md', destination = '04-Knowledge/topic.md', original = sample(), op = 'move-happy';
+  put(source, original); fs.mkdirSync(path.join(vault, '04-Knowledge'));
+  const curator = new CuratorVault(config);
+  curator.recordReview({ operation_id: op, path: source, expected_sha256: hash(original), rationale: '검토 완료' });
+  const moved = curator.moveNote({ operation_id: op, path: source, destination, expected_sha256: hash(original), rationale: '지식으로 분류' });
+  assert.deepEqual(moved, {status:'moved', operation_id:op, source_path:source, path:destination, sha256:hash(original)});
+  assert.equal(fs.existsSync(path.join(vault, source)), false);
+  assert.equal(fs.readFileSync(path.join(vault, destination), 'utf8'), original);
+  const done = curator.finalizeReview({ operation_id: op, path: destination, expected_sha256: moved.sha256 });
+  assert.equal(done.status, 'curated');
+  assert.match(fs.readFileSync(path.join(vault, destination), 'utf8'), /^status: curated$/mu);
+  assert.deepEqual(curator.moveNote({ operation_id: op, path: source, destination, expected_sha256: hash(original), rationale: '지식으로 분류' }), moved);
+});
+
+test('move then organize and finalize supports retries at each stage', t => {
+  const { config, put, vault } = fixture(t), source = '00-Inbox/topic.md', destination = '04-Knowledge/topic.md', original = sample(), op = 'move-organize';
+  put(source, original); fs.mkdirSync(path.join(vault, '04-Knowledge'));
+  const c = new CuratorVault(config), args = { operation_id: op, path: source, destination, expected_sha256: hash(original), rationale: '분류' };
+  c.recordReview({ operation_id: op, path: source, expected_sha256: hash(original), rationale: '검토' });
+  const moved = c.moveNote(args);
+  const organized = c.organizeNote({ operation_id: op, path: destination, expected_sha256: moved.sha256, new_body: '# 정리\n\n검증된 고유 내용.\n<!-- hermes-memory:' + 'a'.repeat(64) + ' -->\n', rationale: '정리' });
+  assert.deepEqual(c.moveNote(args), moved);
+  const done = c.finalizeReview({ operation_id: op, path: destination, expected_sha256: organized.sha256 });
+  assert.equal(done.status, 'curated');
+  assert.deepEqual(c.moveNote(args), moved);
+  assert.deepEqual(c.finalizeReview({ operation_id: op, path: destination, expected_sha256: done.sha256 }), done);
+  assert.match(fs.readFileSync(path.join(vault, destination), 'utf8'), /# 정리/u);
+});
+
+test('incomplete move cannot be finalized using independently recorded destination review', t => {
+  const { config, put, vault } = fixture(t), source = '00-Inbox/topic.md', destination = '04-Knowledge/topic.md', original = sample(), op = 'move-interrupted';
+  put(source, original); fs.mkdirSync(path.join(vault, '04-Knowledge'));
+  const curator = new CuratorVault(config), args = {operation_id:op, path:source, destination, expected_sha256:hash(original), rationale:'분류'};
+  curator.recordReview({operation_id:op, path:source, expected_sha256:hash(original), rationale:'검토'});
+  const write = curator.writeJsonReplace.bind(curator);
+  curator.writeJsonReplace = (file, value) => { if (value.stage === 'destination_verified') throw new Error('injected'); return write(file, value); };
+  assert.throws(() => curator.moveNote(args), /injected/u);
+  assert.throws(() => curator.recordReview({operation_id:'other', path:destination, expected_sha256:hash(original), rationale:'검토'}), /move|journal/iu);
+  assert.throws(() => curator.finalizeReview({operation_id:'other', path:destination, expected_sha256:hash(original)}), /move|journal/iu);
+  assert.equal(fs.readFileSync(path.join(vault,destination),'utf8'), original);
+});
+
+test('interrupted verified destination retains copies and refuses automatic deletion', t => {
+  const { config, put, vault } = fixture(t), source = '00-Inbox/topic.md', destination = '04-Knowledge/topic.md', original = sample(), op = 'move-fault';
+  put(source, original); fs.mkdirSync(path.join(vault, '04-Knowledge'));
+  const curator = new CuratorVault(config), args = {operation_id:op, path:source, destination, expected_sha256:hash(original), rationale:'분류'};
+  curator.recordReview({operation_id:op, path:source, expected_sha256:hash(original), rationale:'검토'});
+  const write = curator.writeJsonReplace.bind(curator);
+  curator.writeJsonReplace = (file, value) => { write(file, value); if (value.stage === 'destination_verified') throw new Error('injected'); };
+  assert.throws(() => curator.moveNote(args), /injected/u);
+  curator.writeJsonReplace = write;
+  assert.throws(() => curator.moveNote(args), /manual recovery/iu);
+  assert.equal(fs.readFileSync(path.join(vault,source),'utf8'), original);
+  assert.equal(fs.readFileSync(path.join(vault,destination),'utf8'), original);
+  assert.equal(fs.readFileSync(path.join(config.stateDir,'curator/backups',op,`${hash(source)}-${hash(original)}.md`),'utf8'), original);
+});
+
+
+test('crash after source unlink before journal update requires manual recovery', t => {
+  const { config, put, vault } = fixture(t), source = '00-Inbox/topic.md', destination = '04-Knowledge/topic.md', original = sample(), op = 'unlink-gap';
+  put(source, original); fs.mkdirSync(path.join(vault, '04-Knowledge'));
+  const c = new CuratorVault(config), args = { operation_id: op, path: source, destination, expected_sha256: hash(original), rationale: '분류' };
+  c.recordReview({ operation_id: op, path: source, expected_sha256: hash(original), rationale: '검토' });
+  const write = c.writeJsonReplace.bind(c);
+  c.writeJsonReplace = (file, value) => { if (value.stage === 'source_removed') throw new Error('injected after unlink'); return write(file, value); };
+  assert.throws(() => c.moveNote(args), /injected after unlink/u);
+  const resumed = new CuratorVault(config);
+  assert.throws(() => resumed.moveNote(args), /manual recovery/iu);
+  assert.equal(fs.existsSync(path.join(vault, source)), false);
+  assert.equal(fs.readFileSync(path.join(vault, destination), 'utf8'), original);
+  assert.equal(fs.readFileSync(path.join(config.stateDir, 'curator/backups', op, `${hash(source)}-${hash(original)}.md`), 'utf8'), original);
+});
+
+test('move and merge share an operation ID lock even with different paths', t => {
+  const { config, put, vault } = fixture(t), source = '00-Inbox/topic.md', destination = '04-Knowledge/topic.md', original = sample(), op = 'same-op';
+  put(source, original); fs.mkdirSync(path.join(vault, '04-Knowledge'));
+  const curator = new CuratorVault(config);
+  curator.recordReview({operation_id:op, path:source, expected_sha256:hash(original), rationale:'검토'});
+  curator.withLocks([`\0operation:${op}`], () => {
+    assert.throws(() => curator.moveNote({operation_id:op, path:source, destination, expected_sha256:hash(original), rationale:'분류'}), /modified/u);
+    assert.throws(() => curator.mergeNotes({operation_id:op, source_path:'04-Knowledge/other.md', target_path:'04-Knowledge/target.md'}), /modified/u);
+  });
+  assert.equal(fs.readFileSync(path.join(vault, source), 'utf8'), original);
+});
+
+
+test('move link scan includes hidden uppercase Markdown and canvas', t => {
+  for (const reference of ['.hidden/link.MD', 'Archive/ref.CANVAS']) {
+    const {config, put, vault} = fixture(t), source = '00-Inbox/topic.md', destination = '04-Knowledge/topic.md', original = sample();
+    put(source, original); put(reference, '[[topic]]'); fs.mkdirSync(path.join(vault, '04-Knowledge'));
+    const c = new CuratorVault(config), op = 'link-check';
+    c.recordReview({operation_id:op, path:source, expected_sha256:hash(original), rationale:'검토'});
+    assert.throws(() => c.moveNote({operation_id:op, path:source, destination, expected_sha256:hash(original), rationale:'분류'}), /link scan/iu);
+    assert.equal(fs.readFileSync(path.join(vault, source), 'utf8'), original);
+  }
+});
+
+
+test('move rejects partial path wikilinks to nested inbox notes', t => {
+  const { config, put, vault } = fixture(t), source = '00-Inbox/sub/topic.md', destination = '04-Knowledge/topic.md', original = sample();
+  put(source, original); put('04-Knowledge/ref.md', '[[sub/topic#heading|alias]]');
+  const c = new CuratorVault(config), op = 'partial-link';
+  c.recordReview({ operation_id: op, path: source, expected_sha256: hash(original), rationale: '검토' });
+  assert.throws(() => c.moveNote({ operation_id: op, path: source, destination, expected_sha256: hash(original), rationale: '분류' }), /link scan/iu);
+  assert.equal(fs.readFileSync(path.join(vault, source), 'utf8'), original);
+  assert.equal(fs.existsSync(path.join(vault, destination)), false);
+});
+
+test('Curator move MCP exposes and executes reviewed move', t => {
+  const {config, put, vault} = fixture(t), source='00-Inbox/topic.md', destination='04-Knowledge/topic.md', original=sample(), op='mcp-move';
+  put(source, original); fs.mkdirSync(path.join(vault, '04-Knowledge'));
+  const call = (id, name, args) => ({jsonrpc:'2.0', id, method:'tools/call', params:{name, arguments:args}});
+  const replies = callServer(t, config, [
+    {jsonrpc:'2.0', id:1, method:'tools/list'},
+    call(2,'record_review',{operation_id:op,path:source,expected_sha256:hash(original),rationale:'검토'}),
+    call(3,'move_note',{operation_id:op,path:source,destination,expected_sha256:hash(original),rationale:'분류'}),
+    call(4,'read_note',{path:destination}),
+    call(5,'finalize_review',{operation_id:op,path:destination,expected_sha256:hash(original)}),
+    call(6,'move_note',{operation_id:op}),
+  ]);
+  assert.ok(replies[0].result.tools.some(item => item.name === 'move_note'));
+  for (const r of replies.slice(1,5)) assert.equal(r.result.isError, false, JSON.stringify(r));
+  assert.equal(replies[5].result.isError, true);
+  assert.match(fs.readFileSync(path.join(vault,destination),'utf8'), /^status: curated$/mu);
+});
+
+
+test('abandoned lock remains fail closed until manually recovered', t => {
+  const {config,put} = fixture(t), relative='00-Inbox/topic.md', original=sample();
+  put(relative,original); const c=new CuratorVault(config);
+  const lock=path.join(config.stateDir, `${hash(relative)}.lock`);
+  fs.mkdirSync(lock);
+  assert.throws(() => c.recordReview({operation_id:'lock-test',path:relative,expected_sha256:hash(original),rationale:'검토'}), /modified/u);
+  assert.ok(fs.statSync(lock).isDirectory());
+  fs.rmdirSync(lock);
+  assert.equal(c.recordReview({operation_id:'lock-test',path:relative,expected_sha256:hash(original),rationale:'검토'}).status, 'reviewed');
+});
+
+
+test('move durably creates operation directory before deleting source', t => {
+  const {config,put,vault} = fixture(t), source='00-Inbox/topic.md', destination='04-Knowledge/topic.md', original=sample(), op='durable-dir';
+  put(source,original); fs.mkdirSync(path.join(vault,'04-Knowledge'));
+  const c=new CuratorVault(config); c.recordReview({operation_id:op,path:source,expected_sha256:hash(original),rationale:'검토'});
+  const sync=fs.fsyncSync, unlink=fs.unlinkSync, synced=[];
+  fs.fsyncSync = fd => { synced.push(fs.readlinkSync(`/proc/self/fd/${fd}`)); return sync(fd); };
+  fs.unlinkSync = file => { if (file === path.join(vault,source)) assert.ok(synced.includes(path.join(config.stateDir,'curator')), 'operations parent not synced'); return unlink(file); };
+  try { c.moveNote({operation_id:op,path:source,destination,expected_sha256:hash(original),rationale:'분류'}); }
+  finally { fs.fsyncSync=sync; fs.unlinkSync=unlink; }
+});

@@ -24,3 +24,12 @@
 - `allowMoves: true` 또는 `allowTrash: true`는 운영 정지 증명이 아니다. Writer, Obsidian, 동기화, 다른 프로세스의 쓰기가 모두 중단된 상태를 별도로 확인할 수 없다면 이동·통합·휴지통을 시도하지 않는다.
 - 상태 잠금은 같은 `stateDir`를 공유하는 협력 프로세스 간에만 유효하다. 다른 호스트·동기화 클라이언트·수동 편집을 막지 못한다.
 - 쓰기 도중 불일치·오류·불완전한 이동이 있으면 재시도하지 말고 원본, 백업, 휴지통 manifest와 SHA256을 비교해 복구한다. 오류 기록에는 노트 본문을 복사하지 않는다.
+
+
+### Inbox 분류 이동 및 장애 대응
+
+Curator의 `move_note`는 `operation_id`, `path`, `expected_sha256`, `destination`, `rationale`을 받는다. 예: `{"operation_id":"classify-1","path":"00-Inbox/topic.md","expected_sha256":"<원본 SHA256>","destination":"04-Knowledge/topic.md","rationale":"지식으로 분류"}`. 성공 시 `status: moved`, 원본 `source_path`, 목적지 `path`, 이동 전 `sha256`을 반환하며 본문과 `status: review`는 바꾸지 않는다. 대상은 같은 이름의 Inbox Markdown과 기존 Projects/Areas/Knowledge/Resources 하위 폴더뿐이다. Journal은 이동·통합·휴지통에서 보호되나 제자리 리뷰와 완료는 가능하다. `allowMoves` 기본값은 false다.
+
+절차는 리뷰 기록 → 필요한 경우 정리 → 이동 → 목적지 재읽기와 분류·내용·링크의 의미 검증 → `finalize_review`이다. 의미 검증은 도구가 강제하지 않는 운영 절차다. 불확실한 분류나 링크, 미지원 링크는 보류하며 링크를 자동 수정하지 않는다. 볼트 Writer, Obsidian, 동기화 및 다른 호스트의 쓰기를 외부에서 모두 중지하고 복제본에서 검증하기 전에는 이동을 활성화하지 않는다. 실볼트 규칙과 역할 경계가 일치하는지도 별도로 검토해야 한다.
+
+장애 시 자동 삭제하거나 덮어쓰지 말고 원본·목적지·백업·`stateDir/curator/operations` 저널 및 리뷰 근거를 보존하고 해시와 단계를 확인한다. 양쪽 파일이 존재하거나 저널이 불완전하면 수동 복구가 필요하다. 이동 중 목적지 리뷰·완료는 다른 작업 ID도 차단된다. SIGKILL 등으로 `stateDir`의 `<경로 SHA256>.lock` 디렉터리나 작업 ID 잠금(`\0operation:<operation_id>`의 SHA256)이 남을 수 있으며 자동 만료하지 않는다. 모든 관련 프로세스와 동기화가 완전히 중지됐음을 확인하고 해당 잠금의 소유 작업과 저널·백업을 조사한 후에만 운영자가 해당 빈 잠금 디렉터리를 제거한다. 잠금 제거만으로 미완료 트랜잭션이 복구되지는 않는다.

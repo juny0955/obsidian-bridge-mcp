@@ -23,6 +23,7 @@ const tools = [
   definition('read_note', '경로의 노트와 최신 SHA256을 읽습니다.', { path: string }, ['path']),
   definition('record_review', '최신 해시를 결속해 리뷰 완료 증거를 기록합니다. 상태는 바꾸지 않습니다.', { operation_id: string, path: string, expected_sha256: string, rationale: string }, ['operation_id', 'path', 'expected_sha256', 'rationale'], true),
   definition('organize_note', '리뷰를 마친 노트 본문을 정리합니다.', { operation_id: string, path: string, expected_sha256: string, new_body: string, rationale: string }, ['operation_id', 'path', 'expected_sha256', 'new_body', 'rationale'], true),
+  definition('move_note', '리뷰된 Inbox 노트를 분류 폴더로 이동하며 상태는 변경하지 않습니다.', { operation_id: string, path: string, expected_sha256: string, destination: string, rationale: string }, ['operation_id', 'path', 'expected_sha256', 'destination', 'rationale'], true),
   definition('merge_notes', '검증된 두 노트를 통합하고 원본을 복구 가능한 휴지통으로 보냅니다.', { operation_id: string, target_path: string, target_sha256: string, source_path: string, source_sha256: string, merged_body: string, rationale: string }, ['operation_id', 'target_path', 'target_sha256', 'source_path', 'source_sha256', 'merged_body', 'rationale'], true),
   definition('trash_note', '검토 완료 노트를 15일간 보관하는 볼트 내부 휴지통으로 이동합니다.', { operation_id: string, path: string, expected_sha256: string, rationale: string }, ['operation_id', 'path', 'expected_sha256', 'rationale'], true),
   definition('list_trash', 'Curator 휴지통 항목과 복원 정보를 나열합니다.'),
@@ -46,6 +47,7 @@ function callTool(params) {
     case 'read_note': return curator.vault.read(args.path);
     case 'record_review': return curator.recordReview(args);
     case 'organize_note': return curator.organizeNote(args);
+    case 'move_note': return curator.moveNote(args);
     case 'merge_notes': return curator.mergeNotes(args);
     case 'trash_note': return curator.trashNote(args);
     case 'list_trash': return curator.listTrash();

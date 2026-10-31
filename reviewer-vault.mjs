@@ -15,12 +15,11 @@ export class ReviewerVault {
       if (!fs.existsSync(directory)) return;
       check(!fs.lstatSync(directory).isSymbolicLink(), 'Link scan unsafe: symbolic link');
       for (const item of fs.readdirSync(directory, { withFileTypes: true })) {
-        if (item.name.startsWith('.')) continue;
         const child = relative ? `${relative}/${item.name}` : item.name;
         if (child === '99-System/Trash' || child.startsWith('99-System/Trash/')) continue;
         check(!item.isSymbolicLink(), 'Link scan unsafe: symbolic link');
         if (item.isDirectory()) walk(child);
-        else if (item.isFile() && /\.(?:md|canvas)$/u.test(item.name)) found.push(child);
+        else if (item.isFile() && /\.(?:md|canvas)$/iu.test(item.name)) found.push(child);
       }
     };
     walk('');
