@@ -318,8 +318,8 @@ test('incomplete move cannot be finalized using independently recorded destinati
   const write = curator.writeJsonReplace.bind(curator);
   curator.writeJsonReplace = (file, value) => { if (value.stage === 'destination_verified') throw new Error('injected'); return write(file, value); };
   assert.throws(() => curator.moveNote(args), /injected/u);
-  curator.recordReview({operation_id:op, path:destination, expected_sha256:hash(original), rationale:'검토'});
-  assert.throws(() => curator.finalizeReview({operation_id:op, path:destination, expected_sha256:hash(original)}), /move|journal/iu);
+  assert.throws(() => curator.recordReview({operation_id:'other', path:destination, expected_sha256:hash(original), rationale:'검토'}), /move|journal/iu);
+  assert.throws(() => curator.finalizeReview({operation_id:'other', path:destination, expected_sha256:hash(original)}), /move|journal/iu);
   assert.equal(fs.readFileSync(path.join(vault,destination),'utf8'), original);
 });
 

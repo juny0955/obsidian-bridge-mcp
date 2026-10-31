@@ -102,10 +102,30 @@ export class CuratorVault extends ReviewerVault {
     check(hash(fs.readFileSync(file)) === manifest.sha256, 'Trash payload hash mismatch');
     return { dir, file, manifestPath, manifest };
   }
+  assertNoPendingMove(relative) {
+    const dir = path.join(this.curatorRoot, 'operations');
+    if (!fs.existsSync(dir)) return;
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (!entry.name.endsWith('.json')) continue;
+      check(entry.isFile() && !entry.isSymbolicLink(), 'Move journal unsafe');
+      let journal;
+      try { journal = this.readJson(path.join(dir, entry.name)); } catch { throw new Error('Move journal unreadable; manual recovery required'); }
+      check(journal && ['move', 'merge'].includes(journal.type) && typeof journal.stage === 'string', 'Move journal invalid; manual recovery required');
+      if (journal.type === 'move') {
+        check(typeof journal.destination === 'string' && ['prepared', 'destination_verified', 'source_removed', 'committed'].includes(journal.stage), 'Move journal invalid; manual recovery required');
+        check(journal.destination !== relative || journal.stage === 'committed', 'Move journal not committed; manual recovery required');
+      }
+    }
+  }
   recordReview(args) {
+    const relative = safeRelative(args.path);
+    return this.withLocks([relative], () => this.recordReviewLocked(args));
+  }
+  recordReviewLocked(args) {
     const op = operationId(args.operation_id), relative = safeRelative(args.path);
     const rationale = safeRationale(args.rationale);
     check(this.config.enabled === true && this.config.role === 'curator', 'Curator is disabled');
+    this.assertNoPendingMove(relative);
     const note = this.vault.read(relative);
     check(note.sha256 === args.expected_sha256, 'Note changed: read again');
     frontmatter(note.content);
@@ -426,7 +446,9 @@ export class CuratorVault extends ReviewerVault {
     return this.withLocks([relative], () => this.finalizeReviewLocked(args));
   }
   finalizeReviewLocked(args) {
-    const op = operationId(args.operation_id), relative = safeRelative(args.path), note = this.vault.read(relative);
+    const op = operationId(args.operation_id), relative = safeRelative(args.path);
+    this.assertNoPendingMove(relative);
+    const note = this.vault.read(relative);
     check(note.sha256 === args.expected_sha256, 'Note changed: read again');
     const { file, record } = this.requireReview(op, relative, note.sha256);
     const associatedOperation = this.operationPath(op);
