@@ -113,6 +113,54 @@ test('review move rejects an existing destination without changing either file',
   assert.equal(fs.statSync(path.join(errorsDir, fs.readdirSync(errorsDir)[0])).mode & 0o777, 0o600);
 });
 
+test('MCP role isolation exposes Reviewer tools but neither role can invoke the other', t => {
+  const { root, config, put } = fixture(t);
+  put('04-Knowledge/주제.md', sample());
+  const reviewerConfig = path.join(root, 'reviewer.json');
+  const writerConfig = path.join(root, 'writer.json');
+  fs.writeFileSync(reviewerConfig, JSON.stringify(config));
+  fs.writeFileSync(writerConfig, JSON.stringify({ ...config, client: 'hermes' }));
+  const requests = [
+    { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '1' } } },
+    { jsonrpc: '2.0', id: 2, method: 'tools/list' },
+    { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'remember', arguments: {} } },
+    { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'list_review_notes', arguments: {} } },
+    { jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'complete_review', arguments: { path: '04-Knowledge/주제.md', destination: '04-Knowledge/주제.md', expected_sha256: hash(sample()), rationale: '확인함' } } },
+    { jsonrpc: '2.0', id: 6, method: 'tools/call', params: { name: 'complete_review', arguments: { path: '04-Knowledge/주제.md', unexpected: true } } },
+  ];
+  const run = (entry, env) => spawnSync(process.execPath, [new URL(entry, import.meta.url).pathname], {
+    cwd: root, env: { ...process.env, ...env }, input: requests.map(JSON.stringify).join('\n') + '\n', encoding: 'utf8', timeout: 10000,
+  });
+  const result = run('./reviewer-server.mjs', { OBSIDIAN_REVIEWER_CONFIG: reviewerConfig });
+  assert.equal(result.status, 0, result.stderr);
+  const replies = result.stdout.trim().split('\n').map(JSON.parse);
+  assert.deepEqual(replies[1].result.tools.map(tool => tool.name), ['get_context', 'list_review_notes', 'read_note', 'complete_review']);
+  assert.equal(replies[1].result.tools[3].annotations.destructiveHint, true);
+  assert.equal(replies[2].result.isError, true);
+  assert.equal(replies[3].result.isError, false);
+  assert.equal(replies[4].result.isError, false);
+  assert.equal(replies[5].result.isError, true);
+  assert.ok(!replies[0].result.instructions.includes('turn_id'));
+  const writer = run('./server.mjs', { OBSIDIAN_BRAIN_CONFIG: writerConfig });
+  assert.equal(writer.status, 0, writer.stderr);
+  const writerReplies = writer.stdout.trim().split('\n').map(JSON.parse);
+  assert.deepEqual(writerReplies[1].result.tools.map(tool => tool.name), ['get_context', 'search_notes', 'read_note', 'remember', 'skip_turn']);
+  assert.equal(writerReplies[4].result.isError, true);
+});
+
+test('reviewer startup refuses absent, disabled or wrong-role config', t => {
+  const { root, config } = fixture(t);
+  const configPath = path.join(root, 'reviewer.json');
+  for (const replacement of [null, { ...config, enabled: false }, { ...config, role: 'writer' }]) {
+    if (replacement) fs.writeFileSync(configPath, JSON.stringify(replacement));
+    const env = { ...process.env };
+    delete env.OBSIDIAN_REVIEWER_CONFIG;
+    if (replacement) env.OBSIDIAN_REVIEWER_CONFIG = configPath;
+    const result = spawnSync(process.execPath, [new URL('./reviewer-server.mjs', import.meta.url).pathname], { env, input: '', encoding: 'utf8', timeout: 10000 });
+    assert.notEqual(result.status, 0);
+  }
+});
+
 test('review move defers path links, relative links and duplicate basenames', t => {
   for (const [relative, content] of [
     ['02-Projects/링크.md', sample() + '\n[[00-Inbox/주제]]\n'],
