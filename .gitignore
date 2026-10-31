@@ -2,3 +2,11 @@
 /state
 config.json
 config.hermes.json
+config.reviewer.json
+/.hermes/plans/
+/package-lock.json
+/node_modules/
+.env
+.env.*
+!.env.example
+*.log
