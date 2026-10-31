@@ -35,6 +35,16 @@ test('review candidates are global, sorted and frontmatter-only', t => {
   ]);
 });
 
+test('unreadable candidates do not hide later valid review notes', t => {
+  const { config, put } = fixture(t);
+  put('00-Inbox/large.md', sample() + 'x'.repeat(300000));
+  put('00-Inbox/invalid.md', Buffer.from([0xff]));
+  const valid = put('04-Knowledge/valid.md', sample());
+  assert.deepEqual(new ReviewerVault(config).listReviewNotes(), [
+    { path: '04-Knowledge/valid.md', sha256: hash(fs.readFileSync(valid)), type: 'knowledge' },
+  ]);
+});
+
 test('complete review in place preserves all content except status and updated', t => {
   const { config, put } = fixture(t);
   const relative = '04-Knowledge/주제.md';
@@ -44,6 +54,47 @@ test('complete review in place preserves all content except status and updated',
   const after = fs.readFileSync(path.join(config.vault, relative), 'utf8');
   assert.equal(after, sample().replace('status: review', 'status: curated').replace('updated: 2020-01-02', `updated: ${day()}`));
   assert.deepEqual(result, { status: 'curated', path: relative, sha256: hash(after) });
+});
+
+test('invalid UTF-8 fails closed before reviewer rewrite or backup', t => {
+  const { config, put } = fixture(t);
+  const relative = '04-Knowledge/invalid.md';
+  const original = Buffer.concat([Buffer.from(sample()), Buffer.from([0xff])]);
+  const file = put(relative, original);
+  const reviewer = new ReviewerVault(config);
+  assert.throws(() => reviewer.vault.read(relative), /UTF-8/u);
+  assert.throws(() => reviewer.completeReview({ path: relative, destination: relative, expected_sha256: hash(original), rationale: '확인함' }), /UTF-8/u);
+  assert.deepEqual(fs.readFileSync(file), original);
+  assert.equal(fs.existsSync(path.join(config.stateDir, 'reviewer/backups')), false);
+});
+
+test('Vault read retains UTF-8 BOM bytes for the original hash', t => {
+  const { config, put } = fixture(t);
+  const relative = '04-Knowledge/bom.md';
+  const original = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(sample())]);
+  put(relative, original);
+  const note = new ReviewerVault(config).vault.read(relative);
+  assert.equal(note.content, '\ufeff' + sample());
+  assert.equal(note.sha256, hash(original));
+});
+
+test('in-place readback failure preserves original bytes and backup', t => {
+  const { config, put } = fixture(t);
+  const relative = '04-Knowledge/주제.md';
+  const original = Buffer.from(sample());
+  const file = put(relative, original);
+  const reviewer = new ReviewerVault(config);
+  const read = reviewer.vault.read.bind(reviewer.vault);
+  let reads = 0;
+  reviewer.vault.read = (...args) => {
+    if (++reads === 2) throw new Error('readback unavailable');
+    return read(...args);
+  };
+  const args = { path: relative, destination: relative, expected_sha256: hash(original), rationale: '확인함' };
+  assert.throws(() => reviewer.completeReview(args), /readback unavailable/u);
+  assert.deepEqual(fs.readFileSync(file), original);
+  const key = hash([relative, args.expected_sha256, relative].join('\0'));
+  assert.deepEqual(fs.readFileSync(path.join(config.stateDir, 'reviewer/backups', `${key}.md`)), original);
 });
 
 test('review candidates exclude ambiguous status frontmatter', t => {
@@ -85,8 +136,35 @@ test('review retry is idempotent and rejects a divergent audit record', t => {
   assert.throws(() => reviewer.completeReview(args), /record disagrees/u);
 });
 
+test('Journal notes can be curated in place but never moved', t => {
+  const { config, put } = fixture(t);
+  const source = '01-Journal/2020-01-01.md';
+  const destination = '04-Knowledge/2020-01-01.md';
+  const file = put(source, sample());
+  const reviewer = new ReviewerVault({ ...config, allowMoves: true });
+  const args = { path: source, expected_sha256: hash(sample()), rationale: '확인함' };
+  assert.throws(() => reviewer.completeReview({ ...args, destination }), /Journal/u);
+  assert.deepEqual(fs.readFileSync(file), Buffer.from(sample()));
+  assert.equal(fs.existsSync(path.join(config.vault, destination)), false);
+  assert.equal(reviewer.completeReview({ ...args, destination: source }).status, 'curated');
+});
+
+test('moves require explicit quiescence-gated configuration, including retries', t => {
+  const { config, put } = fixture(t);
+  const source = '00-Inbox/주제.md', destination = '04-Knowledge/주제.md';
+  const file = put(source, sample());
+  const args = { path: source, destination, expected_sha256: hash(sample()), rationale: '확인함' };
+  assert.throws(() => new ReviewerVault(config).completeReview(args), /disabled/u);
+  assert.deepEqual(fs.readFileSync(file), Buffer.from(sample()));
+  assert.equal(fs.existsSync(path.join(config.vault, destination)), false);
+  const moved = new ReviewerVault({ ...config, allowMoves: true }).completeReview(args);
+  assert.equal(moved.status, 'curated');
+  assert.throws(() => new ReviewerVault(config).completeReview(args), /disabled/u);
+});
+
 test('review moves an Inbox note without changing its body or provenance', t => {
   const { config, put } = fixture(t);
+  config.allowMoves = true;
   const source = '00-Inbox/주제.md', destination = '04-Knowledge/주제.md';
   put(source, sample());
   const reviewer = new ReviewerVault(config);
@@ -101,6 +179,7 @@ test('review moves an Inbox note without changing its body or provenance', t => 
 
 test('review move retry refuses a reappeared source', t => {
   const { config, put } = fixture(t);
+  config.allowMoves = true;
   const source = '00-Inbox/주제.md', destination = '04-Knowledge/주제.md';
   put(source, sample());
   const reviewer = new ReviewerVault(config);
@@ -113,6 +192,7 @@ test('review move retry refuses a reappeared source', t => {
 
 test('review move rejects an existing destination without changing either file', t => {
   const { config, put } = fixture(t);
+  config.allowMoves = true;
   const source = '00-Inbox/주제.md', destination = '04-Knowledge/주제.md';
   put(source, sample());
   const existing = put(destination, sample('curated'));
@@ -197,6 +277,24 @@ test('reviewer startup refuses absent, disabled or wrong-role config', t => {
   }
 });
 
+test('move scan rejects Archive notes and canvas file references', t => {
+  for (const [relative, content] of [
+    ['06-Archive/링크.md', sample('curated') + '\n[[00-Inbox/주제]]\n'],
+    ['02-Projects/보드.canvas', JSON.stringify({ nodes: [{ type: 'file', file: '00-Inbox/주제.md' }] })],
+    ['06-Archive/보드.canvas', JSON.stringify({ nodes: [{ type: 'text', text: '[[00-Inbox/주제]]' }] })],
+    ['보드.canvas', JSON.stringify({ nodes: [{ type: 'file', file: '00-Inbox/주제.md' }] })],
+  ]) {
+    const { config, put } = fixture(t);
+    config.allowMoves = true;
+    const source = '00-Inbox/주제.md', destination = '04-Knowledge/주제.md';
+    const file = put(source, sample());
+    put(relative, content);
+    assert.throws(() => new ReviewerVault(config).completeReview({ path: source, destination, expected_sha256: hash(sample()), rationale: '확인함' }), /link|unsafe/iu);
+    assert.deepEqual(fs.readFileSync(file), Buffer.from(sample()));
+    assert.equal(fs.existsSync(path.join(config.vault, destination)), false);
+  }
+});
+
 test('review move defers path links, relative links and duplicate basenames', t => {
   for (const [relative, content] of [
     ['02-Projects/링크.md', sample() + '\n[[00-Inbox/주제]]\n'],
@@ -216,7 +314,7 @@ test('review move defers path links, relative links and duplicate basenames', t 
     const source = '00-Inbox/주제.md', destination = '04-Knowledge/주제.md';
     put(source, sample());
     put(relative, content);
-    const reviewer = new ReviewerVault({ vault, stateDir: path.join(tRoot, 'state'), enabled: true });
+    const reviewer = new ReviewerVault({ vault, stateDir: path.join(tRoot, 'state'), enabled: true, allowMoves: true });
     assert.throws(() => reviewer.completeReview({ path: source, destination, expected_sha256: hash(sample()), rationale: '확인함' }), /link|basename/iu);
     assert.equal(fs.readFileSync(path.join(vault, source), 'utf8'), sample());
     assert.equal(fs.existsSync(path.join(vault, destination)), false);

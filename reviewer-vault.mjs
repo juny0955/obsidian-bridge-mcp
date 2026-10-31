@@ -8,9 +8,28 @@ export class ReviewerVault {
     this.vault = new Vault({ ...config, client: 'hermes' });
     this.config = config;
   }
+  moveReferences() {
+    const found = [];
+    const walk = relative => {
+      const directory = path.join(this.vault.root, relative);
+      if (!fs.existsSync(directory)) return;
+      check(!fs.lstatSync(directory).isSymbolicLink(), 'Link scan unsafe: symbolic link');
+      for (const item of fs.readdirSync(directory, { withFileTypes: true })) {
+        if (item.name.startsWith('.')) continue;
+        const child = relative ? `${relative}/${item.name}` : item.name;
+        check(!item.isSymbolicLink(), 'Link scan unsafe: symbolic link');
+        if (item.isDirectory()) walk(child);
+        else if (item.isFile() && /\.(?:md|canvas)$/u.test(item.name)) found.push(child);
+      }
+    };
+    walk('');
+    return found;
+  }
   listReviewNotes() {
     return this.vault.notes().flatMap(path => {
-      const note = this.vault.read(path);
+      let note;
+      try { note = this.vault.read(path); }
+      catch { return []; } // An unreadable candidate must not block other review notes.
       const front = note.content.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u)?.[1];
       if (!front || (front.match(/^status\s*:/gmu) ?? []).length !== 1 || !/^status: review$/mu.test(front)) return [];
       return [{ path, sha256: note.sha256, type: front.match(/^type: ([a-z]+)$/mu)?.[1] ?? null }];
@@ -27,6 +46,8 @@ export class ReviewerVault {
     check(/^(?:01-Journal|02-Projects|03-Areas|04-Knowledge|05-Resources)\//u.test(args.destination) &&
       path.posix.basename(args.path) === path.posix.basename(args.destination) &&
       (args.path !== args.destination || !args.path.startsWith('00-Inbox/')), 'Invalid destination');
+    check(!args.path.startsWith('01-Journal/') || source === destination, 'Journal notes must stay in place');
+    check(source === destination || this.config.allowMoves === true, 'Review moves disabled: require externally verified quiescence');
     const key = hash([args.path, args.expected_sha256, args.destination].join('\0'));
     const reviewerDir = path.join(this.config.stateDir, 'reviewer');
     fs.mkdirSync(reviewerDir, { recursive: true, mode: 0o700 });
@@ -34,7 +55,7 @@ export class ReviewerVault {
     const backupDir = path.join(reviewerDir, 'backups');
     const locks = [...new Set([args.path, args.destination])].map(relative => path.join(this.config.stateDir, `${hash(relative)}.lock`)).sort();
     const acquired = [];
-    let temp, createdDestination = false, removedSource = false;
+    let temp, createdDestination = false, removedSource = false, inPlaceWritten = false, content;
     try {
       for (const lock of locks) { fs.mkdirSync(lock, { mode: 0o700 }); acquired.push(lock); }
       if (fs.existsSync(record)) {
@@ -49,9 +70,9 @@ export class ReviewerVault {
       check(before.sha256 === args.expected_sha256, 'Note changed: read again');
       if (source !== destination) {
         check(!fs.existsSync(destination), 'Destination already exists');
-        for (const relative of this.vault.notes()) {
-          if (relative !== args.path) check(path.posix.basename(relative) !== path.posix.basename(args.path), 'Duplicate basename makes move unsafe');
-          const content = this.vault.read(relative).content;
+        for (const relative of this.moveReferences()) {
+          if (relative !== args.path && relative.endsWith('.md')) check(path.posix.basename(relative) !== path.posix.basename(args.path), 'Duplicate basename makes move unsafe');
+          const content = this.readMoveReference(relative);
           check(!content.includes(args.path) && !content.includes(args.path.slice(0, -3)) &&
             !content.includes(encodeURI(args.path)) && !/!?\[[^\]\n]*\]\((?!https?:\/\/|mailto:|#)[^)]*\)/u.test(content),
           'Path or relative link makes move unsafe');
@@ -65,12 +86,12 @@ export class ReviewerVault {
       const newline = front[1].includes('\r\n') ? '\r\n' : '\n';
       let metadata = front[2].replace(/^status: review$/mu, 'status: curated');
       metadata = /^updated:.*$/mu.test(metadata) ? metadata.replace(/^updated:.*$/mu, `updated: ${day()}`) : `${metadata}${newline}updated: ${day()}`;
-      const content = front[1] + metadata + front[3] + before.content.slice(front[0].length);
+      content = front[1] + metadata + front[3] + before.content.slice(front[0].length);
       fs.mkdirSync(backupDir, { recursive: true, mode: 0o700 });
       fs.writeFileSync(path.join(backupDir, `${key}.md`), before.content, { flag: 'wx', mode: 0o600 });
       temp = `${destination}.${randomUUID()}.tmp`;
       fs.writeFileSync(temp, content, { flag: 'wx', mode: 0o600 });
-      if (source === destination) { fs.renameSync(temp, destination); temp = null; }
+      if (source === destination) { fs.renameSync(temp, destination); temp = null; inPlaceWritten = true; }
       else { fs.linkSync(temp, destination); createdDestination = true; }
       const after = this.vault.read(args.destination);
       check(after.content === content, 'Review readback mismatch');
@@ -83,13 +104,25 @@ export class ReviewerVault {
       fs.writeFileSync(record, JSON.stringify({ ...result, rationale: args.rationale }), { flag: 'wx', mode: 0o600 });
       return result;
     } catch (error) {
+      if (inPlaceWritten) {
+        try {
+          // Never overwrite an intervening edit. Restore only our exact output.
+          if (hash(fs.readFileSync(source)) === hash(content)) {
+            temp = `${source}.${randomUUID()}.tmp`;
+            fs.writeFileSync(temp, fs.readFileSync(path.join(backupDir, `${key}.md`)), { flag: 'wx', mode: 0o600 });
+            fs.renameSync(temp, source);
+            temp = null;
+            inPlaceWritten = false;
+          }
+        } catch { /* Keep the original error and the backup for manual recovery. */ }
+      }
       if (createdDestination && !removedSource && fs.existsSync(source) && fs.existsSync(destination) &&
           fs.statSync(destination).ino === fs.statSync(temp).ino) fs.unlinkSync(destination);
       try {
         const errors = path.join(reviewerDir, 'errors');
         fs.mkdirSync(errors, { recursive: true, mode: 0o700 });
         fs.writeFileSync(path.join(errors, `${key}-${randomUUID()}.json`),
-          JSON.stringify({ key, path: args.path, destination: args.destination, error: error.code ?? error.message, at: new Date().toISOString(), manualRecovery: removedSource }),
+          JSON.stringify({ key, path: args.path, destination: args.destination, error: error.code ?? error.message, at: new Date().toISOString(), manualRecovery: removedSource || inPlaceWritten }),
           { flag: 'wx', mode: 0o600 });
       } catch { /* Preserve the original failure; backup remains available. */ }
       throw error;
@@ -97,5 +130,11 @@ export class ReviewerVault {
       if (temp && fs.existsSync(temp)) fs.unlinkSync(temp);
       acquired.reverse().forEach(lock => fs.rmdirSync(lock));
     }
+  }
+  readMoveReference(relative) {
+    const file = path.join(this.vault.root, relative);
+    check(fs.statSync(file).size <= 300000, 'Link scan unsafe: file too large');
+    try { return new TextDecoder('utf-8', { fatal: true }).decode(fs.readFileSync(file)); }
+    catch { throw new Error('Link scan unsafe: invalid UTF-8'); }
   }
 }

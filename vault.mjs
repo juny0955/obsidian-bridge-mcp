@@ -69,8 +69,11 @@ export class Vault {
   read(relative, system = false) {
     const target = this.target(relative, system);
     check(fs.statSync(target).size <= 300000, 'Note too large; read manually');
-    const content = fs.readFileSync(target, 'utf8');
-    return { path: relative, content, sha256: hash(content) };
+    const bytes = fs.readFileSync(target);
+    let content;
+    try { content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes); }
+    catch { throw new Error('Invalid UTF-8 note; review manually'); }
+    return { path: relative, content, sha256: hash(bytes) };
   }
   notes() {
     const results = [];

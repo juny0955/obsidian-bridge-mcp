@@ -2,5 +2,6 @@
   "vault": "/absolute/path/to/vault",
   "stateDir": "/absolute/path/to/shared-state",
   "role": "reviewer",
-  "enabled": false
+  "enabled": false,
+  "allowMoves": false
 }
