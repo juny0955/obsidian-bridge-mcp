@@ -63,7 +63,7 @@ test('review rejects stale hashes and invalid status without changing the source
     { destination: '00-Inbox/주제.md' }, { destination: '06-Archive/주제.md' },
     { destination: '04-Knowledge/../주제.md' }, { expected_sha256: 'XYZ' },
   ]) assert.throws(() => reviewer.completeReview({ ...args, ...invalid }));
-  for (const status of ['draft', 'evergreen', 'curated', 'review\nstatus: review']) {
+  for (const status of ['draft', 'evergreen', 'curated', 'review\nstatus: review', 'review\nstatus : evergreen']) {
     const original = sample().replace('status: review', `status: ${status}`);
     fs.writeFileSync(file, original);
     assert.throws(() => reviewer.completeReview({ ...args, expected_sha256: hash(original) }), /Status/u);

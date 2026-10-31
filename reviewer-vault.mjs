@@ -12,7 +12,7 @@ export class ReviewerVault {
     return this.vault.notes().flatMap(path => {
       const note = this.vault.read(path);
       const front = note.content.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u)?.[1];
-      if (!front || (front.match(/^status:.*$/gmu) ?? []).length !== 1 || !/^status: review$/mu.test(front)) return [];
+      if (!front || (front.match(/^status\s*:/gmu) ?? []).length !== 1 || !/^status: review$/mu.test(front)) return [];
       return [{ path, sha256: note.sha256, type: front.match(/^type: ([a-z]+)$/mu)?.[1] ?? null }];
     }).slice(0, 30);
   }
@@ -60,7 +60,7 @@ export class ReviewerVault {
       }
       const front = before.content.match(/^(---\r?\n)([\s\S]*?)(\r?\n---(?:\r?\n|$))/u);
       check(front, 'Missing frontmatter');
-      check((front[2].match(/^status:.*$/gmu) ?? []).length === 1 && /^status: review$/mu.test(front[2]), 'Status must be exactly review');
+      check((front[2].match(/^status\s*:/gmu) ?? []).length === 1 && /^status: review$/mu.test(front[2]), 'Status must be exactly review');
       check((front[2].match(/^updated:.*$/gmu) ?? []).length <= 1, 'Duplicate updated property');
       const newline = front[1].includes('\r\n') ? '\r\n' : '\n';
       let metadata = front[2].replace(/^status: review$/mu, 'status: curated');
