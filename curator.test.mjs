@@ -355,6 +355,21 @@ test('interrupted verified destination retains copies and refuses automatic dele
 });
 
 
+test('crash after source unlink before journal update requires manual recovery', t => {
+  const { config, put, vault } = fixture(t), source = '00-Inbox/topic.md', destination = '04-Knowledge/topic.md', original = sample(), op = 'unlink-gap';
+  put(source, original); fs.mkdirSync(path.join(vault, '04-Knowledge'));
+  const c = new CuratorVault(config), args = { operation_id: op, path: source, destination, expected_sha256: hash(original), rationale: '분류' };
+  c.recordReview({ operation_id: op, path: source, expected_sha256: hash(original), rationale: '검토' });
+  const write = c.writeJsonReplace.bind(c);
+  c.writeJsonReplace = (file, value) => { if (value.stage === 'source_removed') throw new Error('injected after unlink'); return write(file, value); };
+  assert.throws(() => c.moveNote(args), /injected after unlink/u);
+  const resumed = new CuratorVault(config);
+  assert.throws(() => resumed.moveNote(args), /manual recovery/iu);
+  assert.equal(fs.existsSync(path.join(vault, source)), false);
+  assert.equal(fs.readFileSync(path.join(vault, destination), 'utf8'), original);
+  assert.equal(fs.readFileSync(path.join(config.stateDir, 'curator/backups', op, `${hash(source)}-${hash(original)}.md`), 'utf8'), original);
+});
+
 test('move and merge share an operation ID lock even with different paths', t => {
   const { config, put, vault } = fixture(t), source = '00-Inbox/topic.md', destination = '04-Knowledge/topic.md', original = sample(), op = 'same-op';
   put(source, original); fs.mkdirSync(path.join(vault, '04-Knowledge'));
