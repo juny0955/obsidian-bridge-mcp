@@ -49,7 +49,7 @@ function respond(request) {
   switch (request.method) {
     case 'initialize': return { ...base, result: {
       protocolVersion: '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'obsidian_brain', version: '1.0.0' },
-      instructions: 'The user authorized automatic Second-Brain capture across local Codex projects. Before final answers, preserve useful new knowledge via get_context, search_notes, read_note, remember, or mark skip_turn. Follow vault rules; exclude secrets and unauthorized sensitive content. Hook context provides session_id/turn_id. No extra API or external transmission is used by this server.',
+      instructions: `Second-Brain capture for the configured ${vault.clientName} environment is ${config.enabled ? 'enabled' : 'disabled'}. When enabled and the current hook provides real session_id/turn_id, preserve useful Korean knowledge before final answers: get_context, search_notes, read_note, then remember or skip_turn. Follow vault rules; exclude secrets and unauthorized sensitive content. Never invent IDs or claim a save after failure. No extra API or external transmission is used by this server.`,
     } };
     case 'ping': return { ...base, result: {} };
     case 'tools/list': return { ...base, result: { tools } };

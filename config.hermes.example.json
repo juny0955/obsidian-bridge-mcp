@@ -1,0 +1,6 @@
+{
+  "vault": "/absolute/path/to/vps/obsidian-vault",
+  "stateDir": "/absolute/path/to/Obsidian-Bridge/state",
+  "client": "hermes",
+  "enabled": false
+}

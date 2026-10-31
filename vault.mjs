@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
+import { clientId, clientName, validTurnIds } from './client.mjs';
 
 export const hash = text => createHash('sha256').update(text).digest('hex');
 export const folders = ['00-Inbox', '01-Journal', '02-Projects', '03-Areas', '04-Knowledge', '05-Resources'];
@@ -10,9 +11,10 @@ export function text(value, label, max = 80000) {
   check(typeof value === 'string' && value.trim().length > 0 && value.length <= max, `Invalid ${label}`);
   return value;
 }
-export function turnKey(args) {
-  for (const key of ['session_id', 'turn_id']) check(/^[a-zA-Z0-9_-]{1,160}$/.test(text(args[key], key, 160)), `Invalid ${key}`);
-  return hash(`${args.session_id}\0${args.turn_id}`);
+export function turnKey(args, client = 'codex') {
+  check(validTurnIds(args, client), 'Invalid session_id or turn_id');
+  const identity = `${args.session_id}\0${args.turn_id}`;
+  return hash(client === 'codex' ? identity : `hermes\0${identity}`);
 }
 export function day() {
   return new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
@@ -20,6 +22,8 @@ export function day() {
 export class Vault {
   constructor(config) {
     this.config = config;
+    this.client = clientId(config);
+    this.clientName = clientName(config);
     this.root = fs.realpathSync(text(config.vault, 'vault'));
     fs.mkdirSync(config.stateDir, { recursive: true, mode: 0o700 });
   }
@@ -71,7 +75,7 @@ export class Vault {
       return terms.every(term => haystack.includes(term)) ? [{ path: relative, excerpt: note.content.slice(0, 900), sha256: note.sha256 }] : [];
     }).slice(0, 30);
   }
-  statePath(args) { return path.join(this.config.stateDir, `${turnKey(args)}.json`); }
+  statePath(args) { return path.join(this.config.stateDir, `${turnKey(args, this.client)}.json`); }
   finish(args, status, note = null) {
     const target = this.statePath(args);
     const temporary = `${target}.${randomUUID()}.tmp`;
@@ -81,9 +85,9 @@ export class Vault {
   }
   remember(args) {
     check(this.config.enabled, 'Obsidian auto-save is disabled');
-    const key = turnKey(args);
+    const key = turnKey(args, this.client);
     const target = this.target(args.path);
-    const marker = `<!-- codex-memory:${hash(`${key}\0${args.path}`)} -->`;
+    const marker = `<!-- ${this.client}-memory:${hash(`${key}\0${args.path}`)} -->`;
     const body = text(args.body, 'body');
     check(!/\{\{[^}]+\}\}/u.test(body), 'Resolve template placeholders first');
     check(!/-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:sk-proj-|ghp_|github_pat_|xox[baprs]-)[A-Za-z0-9_-]{12,}/u.test(body), 'Possible credential: remove before saving');
@@ -102,7 +106,7 @@ export class Vault {
         check(Array.isArray(related) && related.every(link => typeof link === 'string' && /^\[\[[^\]\n]+\]\]$/u.test(link)), 'Invalid related links');
         const notes = this.notes();
         check(related.every(link => notes.some(note => note === `${link.slice(2, -2)}.md` || path.basename(note, '.md') === link.slice(2, -2))), 'Related note does not exist');
-        content = `---\ntype: ${args.type}\nstatus: review\ncreated: ${day()}\nupdated: ${day()}\ntags: ${JSON.stringify([...new Set(tags)])}\nrelated: ${JSON.stringify([...new Set(related)])}\nsource: ${JSON.stringify(`Codex session ${args.session_id}`)}\n---\n\n${body.trim()}\n\n${marker}\n`;
+        content = `---\ntype: ${args.type}\nstatus: review\ncreated: ${day()}\nupdated: ${day()}\ntags: ${JSON.stringify([...new Set(tags)])}\nrelated: ${JSON.stringify([...new Set(related)])}\nsource: ${JSON.stringify(`${this.clientName} session ${args.session_id}`)}\n---\n\n${body.trim()}\n\n${marker}\n`;
         fs.mkdirSync(path.dirname(target), { recursive: true });
         fs.writeFileSync(target, content, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
       } else {
@@ -113,7 +117,7 @@ export class Vault {
         const end = prior.indexOf('\n---', 4);
         let front = prior.slice(0, end);
         front = /^updated:.*$/mu.test(front) ? front.replace(/^updated:.*$/mu, `updated: ${day()}`) : `${front}\nupdated: ${day()}`;
-        content = `${front}${prior.slice(end)}\n\n## Codex 추가 기록 · ${day()}\n\n${body.trim()}\n\n${marker}\n`;
+        content = `${front}${prior.slice(end)}\n\n## ${this.clientName} 추가 기록 · ${day()}\n\n${body.trim()}\n\n${marker}\n`;
         const temporary = `${target}.${randomUUID()}.tmp`;
         fs.writeFileSync(temporary, content, { encoding: 'utf8', flag: 'wx', mode: fs.statSync(target).mode & 0o777 });
         fs.renameSync(temporary, target);

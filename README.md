@@ -1,8 +1,10 @@
 # Obsidian Bridge
 
-로컬 Codex에서 유용한 지식과 결정을 Obsidian 볼트에 기록하는 MCP 서버와 훅입니다. Node.js 기본 모듈만 사용하며, 별도의 npm 패키지 설치나 브리지 전용 API 키가 필요하지 않습니다.
+Codex와 Hermes에서 유용한 지식과 결정을 Obsidian 볼트에 기록하는 MCP 서버와 훅입니다. Node.js 기본 모듈만 사용하며, 별도의 npm 패키지 설치나 브리지 전용 API 키가 필요하지 않습니다.
 
-Codex가 노트의 규칙과 기존 내용을 확인한 뒤 새 노트를 만들거나 기존 노트에 내용을 추가합니다. 훅은 각 턴의 식별자를 전달하고, 저장 또는 건너뛰기 처리가 누락되면 한 번 더 확인하도록 요청합니다. 모든 대화를 그대로 저장하는 기능은 아닙니다.
+에이전트가 노트의 규칙과 기존 내용을 확인한 뒤 새 노트를 만들거나 기존 노트에 내용을 추가합니다. Codex 훅은 누락 시 한 번 더 확인하도록 요청합니다. Hermes 훅은 매 턴 지침을 전달하고 종료 시 누락 여부만 기록하며 응답을 차단하지 않습니다. 모든 대화를 그대로 저장하는 기능은 아닙니다.
+
+아래 설치 절차는 Codex용입니다. **VPS Hermes는 [Hermes 설치 안내](hermes-setup.md)**와 [YAML 병합 예제](hermes.config.example.yaml)를 사용하세요.
 
 ## 구성
 
@@ -11,8 +13,12 @@ Codex가 노트의 규칙과 기존 내용을 확인한 뒤 새 노트를 만들
 | `server.mjs` | stdio 방식의 MCP 서버 |
 | `vault.mjs` | 볼트 검색·읽기·생성·추가 및 턴 상태 관리 |
 | `hook.mjs` | `UserPromptSubmit`·`Stop` 훅 처리 |
+| `hermes-hook.mjs` | Hermes `pre_llm_call`·`on_session_end` 훅 처리 |
+| `client.mjs` | 클라이언트 검증, 식별자 검사, 공통 기록 지침 |
 | `bridge.test.mjs` | 파일 보존, 경로 제한, 중복·동시 저장 등의 테스트 |
+| `hermes.test.mjs` | Hermes 페이로드, 상태 분리, subprocess 연동 테스트 |
 | `config.example.json` | 로컬 설정을 만들기 위한 예제 |
+| `config.hermes.example.json` | VPS Hermes용 비활성 기본 설정 |
 | `global-instructions.md` | Codex 지침 설치 안내와 복사용 지침 |
 
 ## 준비 사항
@@ -72,6 +78,7 @@ cp -n config.example.json config.json
 | `vault` | 이미 존재하는 Obsidian 볼트의 절대 경로 |
 | `stateDir` | 턴 처리 상태를 보관할 폴더의 절대 경로. 없으면 자동 생성 |
 | `enabled` | 자동 기록을 사용하려면 `true`. 예제 기본값은 `false` |
+| `client` | `codex` 또는 `hermes`. 생략하면 기존과 동일하게 `codex`; 다른 값은 오류 |
 
 경로에는 실제 절대 경로를 입력하세요. JSON 안의 `~`나 `$HOME`은 자동으로 확장되지 않습니다. `stateDir`는 개인 노트와 섞이지 않도록 저장소의 `state/`를 권장합니다.
 
@@ -173,24 +180,24 @@ Codex가 훅 검토를 요구하면 CLI의 `/hooks`에서 정의를 확인하고
 저장소 폴더에서 실행합니다. 테스트는 임시 볼트를 사용하며 개인 `config.json`이나 실제 볼트가 필요하지 않습니다.
 
 ```sh
-node --test bridge.test.mjs
+node --test bridge.test.mjs hermes.test.mjs
 ```
 
 ## Claude Code 호환성
 
 Claude Code도 [로컬 stdio MCP 서버 연결](https://code.claude.com/docs/en/mcp#option-3-add-a-local-stdio-server)을 지원하므로 `server.mjs`의 검색·읽기 도구를 재사용할 수 있는 구조입니다. 다만 실제 Claude Code 클라이언트 연결은 아직 검증하지 않았습니다.
 
-자동 기록은 현재 Codex용으로 구현되어 있습니다. `hook.mjs`는 `session_id`와 `turn_id`를 요구하지만, Claude Code의 [UserPromptSubmit·Stop 훅](https://code.claude.com/docs/en/hooks)은 같은 `turn_id` 입력을 보장하지 않으며 공통 입력에 `prompt_id`를 제공합니다. 자동 기록을 지원하려면 실제 프롬프트 식별자를 일관되게 변환하고 전달하는 어댑터가 필요합니다. 훅 등록 위치도 `~/.claude/settings.json` 또는 프로젝트의 `.claude/settings.json`으로 달라집니다.
+자동 기록 어댑터는 Codex와 Hermes용으로 구현되어 있습니다. Codex용 `hook.mjs`는 `session_id`와 `turn_id`를 요구하지만, Claude Code의 [UserPromptSubmit·Stop 훅](https://code.claude.com/docs/en/hooks)은 같은 `turn_id` 입력을 보장하지 않으며 공통 입력에 `prompt_id`를 제공합니다. Claude Code 자동 기록을 지원하려면 실제 프롬프트 식별자를 일관되게 변환하고 전달하는 별도 어댑터가 필요합니다. 훅 등록 위치도 `~/.claude/settings.json` 또는 프로젝트의 `.claude/settings.json`으로 달라집니다.
 
 지침은 Claude Code의 [CLAUDE.md와 AGENTS.md 로딩 규칙](https://code.claude.com/docs/en/memory)을 따라 별도로 설치해야 합니다. 현재 복사용 지침과 Codex 설정 예제를 그대로 적용하는 것만으로 Claude Code 자동 기록이 활성화되지는 않습니다.
 
 ## 기록 범위와 제한
 
-- 이 브리지 자체는 별도 외부 API를 호출하지 않고 로컬 파일을 처리합니다. MCP로 읽은 내용은 연결된 Codex의 문맥에 전달되므로 해당 제품의 데이터 처리 정책이 적용됩니다.
+- 이 브리지 자체는 별도 외부 API를 호출하지 않고 실행 호스트의 파일을 처리합니다. MCP로 읽은 내용은 연결된 에이전트의 문맥에 전달되므로 해당 제품과 모델 제공자의 데이터 처리 정책이 적용됩니다.
 - 비밀 정보와 허용하지 않은 민감 정보는 기록하지 않도록 지침을 적용합니다. 코드의 자격 증명 패턴 검사는 일부 형식만 탐지하며 모든 민감 정보를 판별하지는 못합니다.
 - 기존 노트에 추가하려면 `read_note`가 반환한 최신 SHA256이 필요합니다. 내용이 바뀌면 다시 읽어야 하며, 기존 파일의 생성 덮어쓰기는 거부합니다.
 - `enabled: false`는 `remember`와 자동 기록 훅을 비활성화합니다. 검색·읽기 도구는 계속 사용 가능합니다. 연결을 완전히 끄려면 MCP 등록과 훅, 설치한 지침 블록도 제거하세요.
-- 자동 기록은 연결한 로컬 Codex 환경에 적용됩니다. 다른 기기나 일반 ChatGPT까지 자동 적용되지 않습니다.
+- 자동 기록은 설정한 Codex 또는 Hermes 환경에 적용됩니다. 다른 기기나 일반 ChatGPT까지 자동 적용되지 않습니다.
 
 ## 문제 해결
 
@@ -204,4 +211,4 @@ Claude Code도 [로컬 stdio MCP 서버 연결](https://code.claude.com/docs/en/
 
 ## GitHub에 포함하지 않는 파일
 
-`config.json`, `state/`, `backups/`는 개인 경로, 실행 상태, 로컬 설정 백업을 담으므로 `.gitignore`로 제외합니다. 배포에는 `config.example.json`을 사용하고, 실제 볼트와 개인 Codex 설정 파일은 업로드하지 마세요.
+`config.json`, `config.hermes.json`, `state/`, `backups/`는 개인 경로, 실행 상태, 로컬 설정 백업을 담으므로 `.gitignore`로 제외합니다. 배포에는 `config.example.json` 또는 `config.hermes.example.json`을 사용하고, 실제 볼트와 개인 에이전트 설정 파일은 업로드하지 마세요.

@@ -1,0 +1,21 @@
+# Merge these entries into the active Hermes profile's config.yaml.
+# Replace every executable, repository, config, and vault path for the VPS.
+# Preserve existing mcp_servers/hooks entries; do not duplicate obsidian_brain.
+mcp_servers:
+  obsidian_brain:
+    command: "/usr/bin/node"
+    args: ["/opt/Obsidian-Bridge/server.mjs"]
+    env:
+      OBSIDIAN_BRAIN_CONFIG: "/opt/Obsidian-Bridge/config.hermes.json"
+    enabled: true
+    connect_timeout: 15
+    timeout: 30
+    supports_parallel_tool_calls: false
+
+hooks:
+  pre_llm_call:
+    - command: '/usr/bin/env OBSIDIAN_BRAIN_CONFIG="/opt/Obsidian-Bridge/config.hermes.json" "/usr/bin/node" "/opt/Obsidian-Bridge/hermes-hook.mjs"'
+      timeout: 5
+  on_session_end:
+    - command: '/usr/bin/env OBSIDIAN_BRAIN_CONFIG="/opt/Obsidian-Bridge/config.hermes.json" "/usr/bin/node" "/opt/Obsidian-Bridge/hermes-hook.mjs"'
+      timeout: 5

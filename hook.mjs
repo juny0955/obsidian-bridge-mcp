@@ -1,11 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { turnKey } from './vault.mjs';
+import { captureContext, clientId } from './client.mjs';
 
 export function evaluate(config, event) {
-  if (!config.enabled || !event.session_id || !event.turn_id) return {};
+  if (clientId(config) !== 'codex' || !config.enabled || !event.session_id || !event.turn_id) return {};
   const key = turnKey(event);
-  const context = `Obsidian automatic capture is enabled for this local Codex turn. session_id=${event.session_id}; turn_id=${event.turn_id}. Before your final answer, use obsidian_brain MCP tools to save only useful new knowledge/decisions/verified fixes in Korean following get_context rules; search existing notes first and append rather than duplicating. Otherwise call skip_turn. Never store raw chat, secrets or sensitive personal content without explicit authorization. If tools are unavailable, do not retry indefinitely or claim a save.`;
+  const context = captureContext(config, event);
   if (event.hook_event_name === 'UserPromptSubmit') return { hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: context } };
   if (event.hook_event_name !== 'Stop') return {};
   const state = path.join(config.stateDir, `${key}.json`);
