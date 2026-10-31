@@ -294,3 +294,18 @@ test('15-day expiry creates an approval request record but never permanently del
   assert.equal(updatedManifest.approval_request.status, 'not_sent_discord_out_of_scope');
   assert.equal(fs.existsSync(path.join(vault, '99-System/Trash/trash-old', path.basename(sourcePath))), true);
 });
+
+test('move reviewed inbox note without changing bytes then finalize destination', t => {
+  const { config, put, vault } = fixture(t);
+  const source = '00-Inbox/topic.md', destination = '04-Knowledge/topic.md', original = sample(), op = 'move-happy';
+  put(source, original); fs.mkdirSync(path.join(vault, '04-Knowledge'));
+  const curator = new CuratorVault(config);
+  curator.recordReview({ operation_id: op, path: source, expected_sha256: hash(original), rationale: '검토 완료' });
+  const moved = curator.moveNote({ operation_id: op, path: source, destination, expected_sha256: hash(original), rationale: '지식으로 분류' });
+  assert.deepEqual(moved, {status:'moved', operation_id:op, source_path:source, path:destination, sha256:hash(original)});
+  assert.equal(fs.existsSync(path.join(vault, source)), false);
+  assert.equal(fs.readFileSync(path.join(vault, destination), 'utf8'), original);
+  const done = curator.finalizeReview({ operation_id: op, path: destination, expected_sha256: moved.sha256 });
+  assert.equal(done.status, 'curated');
+  assert.match(fs.readFileSync(path.join(vault, destination), 'utf8'), /^status: curated$/mu);
+});

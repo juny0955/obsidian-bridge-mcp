@@ -175,6 +175,80 @@ export class CuratorVault extends ReviewerVault {
     this.writeJsonReplace(evidence.file, { ...evidence.record, stage: 'organized', organization_rationale: rationale, organized_sha256: after.sha256, organized_at: this.isoNow() });
     return { status: 'organized', path: relative, sha256: after.sha256 };
   }
+  assertMoveSafe(source) {
+    const normalized = source.slice(0, -3).toLocaleLowerCase();
+    const base = path.posix.basename(normalized);
+    for (const reference of this.moveReferences()) {
+      if (reference !== source && reference.toLocaleLowerCase().endsWith('.md') && path.posix.basename(reference, path.posix.extname(reference)).toLocaleLowerCase() === base) throw new Error('Link scan: duplicate basename; manual review required');
+      const content = this.readMoveReference(reference);
+      let decoded;
+      try { decoded = decodeURIComponent(content); } catch { throw new Error('Link scan: ambiguous encoding'); }
+      const lower = decoded.toLocaleLowerCase();
+      check(!lower.includes(normalized), 'Link scan: path reference');
+      check(!/^ {0,3}\[[^\]\r\n]+\]:[ \t]*\S/mu.test(decoded) && !/!?\[[^\]\r\n]*\]\((?!https?:\/\/|mailto:|#)[^)]*\)/iu.test(decoded), 'Link scan: unsupported relative link');
+      for (const match of decoded.matchAll(/\[\[([^\]\r\n]+)\]\]/gu)) {
+        const target = match[1].split('|', 1)[0].trim().split('#', 1)[0].split('^', 1)[0].replace(/\.md$/iu, '').toLocaleLowerCase();
+        check(target !== base && target !== normalized, 'Link scan: wikilink reference');
+      }
+    }
+  }
+  moveNote(args) {
+    const source = safeRelative(args.path), destination = safeRelative(args.destination);
+    return this.withLocks([source, destination], () => this.moveNoteLocked(args));
+  }
+  moveNoteLocked(args) {
+    const op = operationId(args.operation_id), source = safeRelative(args.path), destination = safeRelative(args.destination);
+    const rationale = safeRationale(args.rationale), sha = args.expected_sha256;
+    check(this.config.role === 'curator' && this.config.enabled === true && this.config.allowMoves === true, 'Moves disabled: require externally verified quiescence');
+    check(typeof sha === 'string' && /^[a-f0-9]{64}$/u.test(sha), 'Invalid SHA256');
+    check(/^00-Inbox\/.+\.md$/u.test(source) && /^(?:02-Projects|03-Areas|04-Knowledge|05-Resources)\/.+\.md$/u.test(destination) && path.posix.basename(source) === path.posix.basename(destination), 'Invalid move paths');
+    const sourceFile = this.vault.target(source), destFile = this.vault.target(destination);
+    check(fs.existsSync(path.dirname(destFile)) && fs.statSync(path.dirname(destFile)).isDirectory(), 'Destination parent missing');
+    const file = this.operationPath(op), evidenceFile = this.reviewPath(op, destination);
+    const operation = { type: 'move', operation_id: op, source_path: source, destination, source_sha256: sha, rationale };
+    let journal = fs.existsSync(file) ? this.readJson(file) : null;
+    if (journal) check(Object.entries(operation).every(([key, value]) => journal[key] === value) && ['prepared', 'destination_verified', 'source_removed', 'committed'].includes(journal.stage), 'Operation conflict or manual recovery required');
+    const result = { status: 'moved', operation_id: op, source_path: source, path: destination, sha256: sha };
+    const makeEvidence = () => {
+      const original = this.requireReview(op, source, sha).record;
+      return { ...original, path: destination, stage: 'organized', organized_sha256: sha, moved_from: source, move_operation_id: op };
+    };
+    const verifyEvidence = expected => {
+      check(fs.existsSync(evidenceFile), 'Move evidence missing');
+      const actual = this.readJson(evidenceFile);
+      check(Object.entries(expected).every(([key, value]) => actual[key] === value), 'Move evidence conflict; manual recovery required');
+    };
+    if (journal && ['source_removed', 'committed'].includes(journal.stage)) {
+      check(!fs.existsSync(sourceFile) && this.vault.read(destination).sha256 === sha, 'Move retry requires manual recovery');
+      const expected = makeEvidence();
+      if (journal.stage === 'source_removed' && !fs.existsSync(evidenceFile)) this.writeJson(evidenceFile, expected);
+      verifyEvidence(expected);
+      if (journal.stage === 'source_removed') this.writeJsonReplace(file, { ...operation, stage: 'committed' });
+      return result;
+    }
+    check(!journal || journal.stage === 'prepared', 'Move interrupted; manual recovery required');
+    check(!fs.existsSync(destFile), 'Destination occupied; manual recovery required');
+    const note = this.vault.read(source);
+    check(note.sha256 === sha, 'Source changed: read again');
+    frontmatter(note.content);
+    const evidence = makeEvidence();
+    if (fs.existsSync(evidenceFile)) verifyEvidence(evidence);
+    this.assertMoveSafe(source);
+    const bytes = fs.readFileSync(sourceFile), stat = fs.statSync(sourceFile);
+    check(hash(bytes) === sha, 'Source changed before backup');
+    this.backup(op, source, bytes);
+    if (!journal) { journal = { ...operation, stage: 'prepared' }; this.writeJson(file, journal); }
+    durableWrite(destFile, bytes, stat.mode & 0o777); syncDirectory(path.dirname(destFile));
+    check(this.vault.read(destination).sha256 === sha, 'Destination readback failed');
+    this.writeJsonReplace(file, { ...operation, stage: 'destination_verified' });
+    const latest = fs.statSync(sourceFile);
+    check(latest.ino === stat.ino && latest.dev === stat.dev && this.vault.read(source).sha256 === sha, 'Source changed during move');
+    fs.unlinkSync(sourceFile); syncDirectory(path.dirname(sourceFile));
+    this.writeJsonReplace(file, { ...operation, stage: 'source_removed' });
+    if (!fs.existsSync(evidenceFile)) this.writeJson(evidenceFile, evidence); else verifyEvidence(evidence);
+    this.writeJsonReplace(file, { ...operation, stage: 'committed' });
+    return result;
+  }
   trashNote(args) {
     const relative = safeRelative(args.path);
     return this.withLocks([relative], () => this.trashNoteLocked(args));
@@ -355,6 +429,12 @@ export class CuratorVault extends ReviewerVault {
     const op = operationId(args.operation_id), relative = safeRelative(args.path), note = this.vault.read(relative);
     check(note.sha256 === args.expected_sha256, 'Note changed: read again');
     const { file, record } = this.requireReview(op, relative, note.sha256);
+    if (record.move_operation_id) {
+      const journalFile = this.operationPath(op);
+      check(record.move_operation_id === op && fs.existsSync(journalFile), 'Move completion journal missing');
+      const journal = this.readJson(journalFile);
+      check(journal.type === 'move' && journal.stage === 'committed' && journal.operation_id === op && journal.destination === relative && journal.source_path === record.moved_from && journal.source_sha256 === record.organized_sha256 && !fs.existsSync(this.vault.target(journal.source_path)), 'Move not committed; manual recovery required');
+    }
     if (record.stage === 'curated' && /^status: curated$/mu.test(note.content)) return { status: 'curated', path: relative, sha256: note.sha256 };
     if (record.stage === 'finalizing' && /^status: curated$/mu.test(note.content)) {
       check(record.curated_sha256 === note.sha256, 'Finalizing record disagrees with curated note');
