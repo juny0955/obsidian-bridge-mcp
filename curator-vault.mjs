@@ -218,7 +218,7 @@ export class CuratorVault extends ReviewerVault {
       check(!/^ {0,3}\[[^\]\r\n]+\]:[ \t]*\S/mu.test(decoded) && !/!?\[[^\]\r\n]*\]\((?!https?:\/\/|mailto:|#)[^)]*\)/iu.test(decoded), 'Link scan: unsupported relative link');
       for (const match of decoded.matchAll(/\[\[([^\]\r\n]+)\]\]/gu)) {
         const target = match[1].split('|', 1)[0].trim().split('#', 1)[0].split('^', 1)[0].replace(/\.md$/iu, '').toLocaleLowerCase();
-        check(target !== base && target !== normalized && !(target.includes('/') && normalized.endsWith('/' + target)), 'Link scan: wikilink reference');
+        check(!/^\.{1,2}\//u.test(target) && target !== base && target !== normalized && !(target.includes('/') && normalized.endsWith('/' + target)), 'Link scan: wikilink reference');
       }
     }
   }

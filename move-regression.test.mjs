@@ -120,3 +120,20 @@ test('move rejects source and destination directory symlinks', t => {
     else assert.equal(fs.existsSync(path.join(outside, 'topic.md')), false);
   }
 });
+
+
+test('move defers relative wikilinks in incoming notes and the source', t => {
+  for (const [where, link] of [['00-Inbox/ref.md', '[[./topic#head|alias]]'], ['00-Inbox/topic.md', '[[../other]]']]) {
+    const f = fixture(t);
+    if (where === f.source) {
+      f.put(where, f.original + link);
+      f.args.expected_sha256 = hash(f.original + link);
+      f.curator.recordReview({ operation_id: 'relative', path: f.source, expected_sha256: f.args.expected_sha256, rationale: '검토' });
+      f.args.operation_id = 'relative';
+    } else f.put(where, link);
+    const before = fs.readFileSync(path.join(f.vault, f.source), 'utf8');
+    assert.throws(() => f.curator.moveNote(f.args), /link scan/iu);
+    assert.equal(fs.readFileSync(path.join(f.vault, f.source), 'utf8'), before);
+    assert.equal(fs.existsSync(path.join(f.vault, f.destination)), false);
+  }
+});
