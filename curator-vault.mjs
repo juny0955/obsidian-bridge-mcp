@@ -214,7 +214,7 @@ export class CuratorVault extends ReviewerVault {
   }
   moveNote(args) {
     const source = safeRelative(args.path), destination = safeRelative(args.destination);
-    return this.withLocks([source, destination], () => this.moveNoteLocked(args));
+    return this.withLocks([source, destination, `\0operation:${operationId(args.operation_id)}`], () => this.moveNoteLocked(args));
   }
   moveNoteLocked(args) {
     const op = operationId(args.operation_id), source = safeRelative(args.path), destination = safeRelative(args.destination);
@@ -322,7 +322,7 @@ export class CuratorVault extends ReviewerVault {
   }
   mergeNotes(args) {
     const targetPath = safeRelative(args.target_path), sourcePath = safeRelative(args.source_path);
-    return this.withLocks([targetPath, sourcePath], () => this.mergeNotesLocked(args));
+    return this.withLocks([targetPath, sourcePath, `\0operation:${operationId(args.operation_id)}`], () => this.mergeNotesLocked(args));
   }
   assertNoReferences(relative, retainedPath = null) {
     const normalized = relative.slice(0, -3).toLocaleLowerCase(), base = path.posix.basename(normalized);

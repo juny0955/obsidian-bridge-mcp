@@ -337,3 +337,16 @@ test('interrupted verified destination retains copies and refuses automatic dele
   assert.equal(fs.readFileSync(path.join(vault,destination),'utf8'), original);
   assert.equal(fs.readFileSync(path.join(config.stateDir,'curator/backups',op,`${hash(source)}-${hash(original)}.md`),'utf8'), original);
 });
+
+
+test('move and merge share an operation ID lock even with different paths', t => {
+  const { config, put, vault } = fixture(t), source = '00-Inbox/topic.md', destination = '04-Knowledge/topic.md', original = sample(), op = 'same-op';
+  put(source, original); fs.mkdirSync(path.join(vault, '04-Knowledge'));
+  const curator = new CuratorVault(config);
+  curator.recordReview({operation_id:op, path:source, expected_sha256:hash(original), rationale:'검토'});
+  curator.withLocks([`\0operation:${op}`], () => {
+    assert.throws(() => curator.moveNote({operation_id:op, path:source, destination, expected_sha256:hash(original), rationale:'분류'}), /modified/u);
+    assert.throws(() => curator.mergeNotes({operation_id:op, source_path:'04-Knowledge/other.md', target_path:'04-Knowledge/target.md'}), /modified/u);
+  });
+  assert.equal(fs.readFileSync(path.join(vault, source), 'utf8'), original);
+});
