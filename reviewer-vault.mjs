@@ -17,6 +17,7 @@ export class ReviewerVault {
       for (const item of fs.readdirSync(directory, { withFileTypes: true })) {
         if (item.name.startsWith('.')) continue;
         const child = relative ? `${relative}/${item.name}` : item.name;
+        if (child === '99-System/Trash' || child.startsWith('99-System/Trash/')) continue;
         check(!item.isSymbolicLink(), 'Link scan unsafe: symbolic link');
         if (item.isDirectory()) walk(child);
         else if (item.isFile() && /\.(?:md|canvas)$/u.test(item.name)) found.push(child);
@@ -34,6 +35,44 @@ export class ReviewerVault {
       if (!front || (front.match(/^status\s*:/gmu) ?? []).length !== 1 || !/^status: review$/mu.test(front)) return [];
       return [{ path, sha256: note.sha256, type: front.match(/^type: ([a-z]+)$/mu)?.[1] ?? null }];
     }).slice(0, 30);
+  }
+  listReviewNotesDetailed(cursor = '', limit = 30) {
+    check(typeof cursor === 'string' && cursor.length <= 2048, 'Invalid review cursor');
+    check(Number.isInteger(limit) && limit >= 1 && limit <= 30, 'Invalid review limit');
+    const paths = this.vault.notes();
+    const snapshot = hash(paths.map(notePath => {
+      const stat = fs.statSync(path.join(this.vault.root, notePath), { bigint: true });
+      return `${notePath}\0${stat.size}\0${stat.mtimeNs}\0${stat.ino}`;
+    }).join('\0'));
+    let offset = 0;
+    if (cursor) {
+      let decoded;
+      try { decoded = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')); } catch { throw new Error('Invalid review cursor'); }
+      check(decoded && decoded.version === 1 && Number.isInteger(decoded.offset) && decoded.offset >= 0, 'Invalid review cursor');
+      check(decoded.snapshot === snapshot, 'Stale review cursor; restart from the first page');
+      offset = decoded.offset;
+    }
+    const rows = paths.map(notePath => {
+      try {
+        const note = this.vault.read(notePath);
+        const frontMatch = note.content.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u);
+        if (!frontMatch) return { skipped: { path: notePath, reason: 'missing_or_invalid_frontmatter' } };
+        const front = frontMatch[1], statuses = front.match(/^status\s*:/gmu) ?? [];
+        if (statuses.length > 1) return { skipped: { path: notePath, reason: 'duplicate_status' } };
+        if (!/^status: review$/mu.test(front)) return null;
+        return { item: { path: notePath, sha256: note.sha256, type: front.match(/^type: ([a-z]+)$/mu)?.[1] ?? null } };
+      } catch (error) { return { skipped: { path: notePath, reason: error.message.slice(0, 120) } }; }
+    });
+    const page = rows.slice(offset, offset + limit);
+    const nextOffset = offset + page.length;
+    const hasMore = nextOffset < rows.length;
+    const nextCursor = hasMore ? Buffer.from(JSON.stringify({ version: 1, snapshot, offset: nextOffset })).toString('base64url') : null;
+    return {
+      items: page.flatMap(row => row?.item ? [row.item] : []),
+      skipped: page.flatMap(row => row?.skipped ? [row.skipped] : []),
+      total_reviewable: rows.filter(row => row?.item).length,
+      offset, next_cursor: nextCursor, has_more: hasMore,
+    };
   }
   completeReview(args) {
     check(args && typeof args === 'object' && !Array.isArray(args), 'Invalid review arguments');

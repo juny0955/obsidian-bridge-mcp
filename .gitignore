@@ -3,6 +3,7 @@
 config.json
 config.hermes.json
 config.reviewer.json
+config.curator.json
 /.hermes/plans/
 /package-lock.json
 /node_modules/

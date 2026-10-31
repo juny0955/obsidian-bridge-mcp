@@ -1,0 +1,10 @@
+{
+  "vault": "/absolute/path/to/obsidian-vault",
+  "stateDir": "/absolute/path/to/shared-state",
+  "role": "curator",
+  "enabled": false,
+  "allowOrganization": false,
+  "allowMoves": false,
+  "allowTrash": false,
+  "trashRetentionDays": 15
+}
