@@ -309,3 +309,16 @@ test('move reviewed inbox note without changing bytes then finalize destination'
   assert.equal(done.status, 'curated');
   assert.match(fs.readFileSync(path.join(vault, destination), 'utf8'), /^status: curated$/mu);
 });
+
+test('incomplete move cannot be finalized using independently recorded destination review', t => {
+  const { config, put, vault } = fixture(t), source = '00-Inbox/topic.md', destination = '04-Knowledge/topic.md', original = sample(), op = 'move-interrupted';
+  put(source, original); fs.mkdirSync(path.join(vault, '04-Knowledge'));
+  const curator = new CuratorVault(config), args = {operation_id:op, path:source, destination, expected_sha256:hash(original), rationale:'분류'};
+  curator.recordReview({operation_id:op, path:source, expected_sha256:hash(original), rationale:'검토'});
+  const write = curator.writeJsonReplace.bind(curator);
+  curator.writeJsonReplace = (file, value) => { if (value.stage === 'destination_verified') throw new Error('injected'); return write(file, value); };
+  assert.throws(() => curator.moveNote(args), /injected/u);
+  curator.recordReview({operation_id:op, path:destination, expected_sha256:hash(original), rationale:'검토'});
+  assert.throws(() => curator.finalizeReview({operation_id:op, path:destination, expected_sha256:hash(original)}), /move|journal/iu);
+  assert.equal(fs.readFileSync(path.join(vault,destination),'utf8'), original);
+});

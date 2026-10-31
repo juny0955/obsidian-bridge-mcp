@@ -429,6 +429,11 @@ export class CuratorVault extends ReviewerVault {
     const op = operationId(args.operation_id), relative = safeRelative(args.path), note = this.vault.read(relative);
     check(note.sha256 === args.expected_sha256, 'Note changed: read again');
     const { file, record } = this.requireReview(op, relative, note.sha256);
+    const associatedOperation = this.operationPath(op);
+    if (fs.existsSync(associatedOperation)) {
+      const pending = this.readJson(associatedOperation);
+      if (pending.type === 'move' && pending.destination === relative) check(record.move_operation_id === op && pending.stage === 'committed', 'Move journal not committed or evidence missing');
+    }
     if (record.move_operation_id) {
       const journalFile = this.operationPath(op);
       check(record.move_operation_id === op && fs.existsSync(journalFile), 'Move completion journal missing');
