@@ -350,3 +350,15 @@ test('move and merge share an operation ID lock even with different paths', t =>
   });
   assert.equal(fs.readFileSync(path.join(vault, source), 'utf8'), original);
 });
+
+
+test('move link scan includes hidden uppercase Markdown and canvas', t => {
+  for (const reference of ['.hidden/link.MD', 'Archive/ref.CANVAS']) {
+    const {config, put, vault} = fixture(t), source = '00-Inbox/topic.md', destination = '04-Knowledge/topic.md', original = sample();
+    put(source, original); put(reference, '[[topic]]'); fs.mkdirSync(path.join(vault, '04-Knowledge'));
+    const c = new CuratorVault(config), op = 'link-check';
+    c.recordReview({operation_id:op, path:source, expected_sha256:hash(original), rationale:'검토'});
+    assert.throws(() => c.moveNote({operation_id:op, path:source, destination, expected_sha256:hash(original), rationale:'분류'}), /link scan/iu);
+    assert.equal(fs.readFileSync(path.join(vault, source), 'utf8'), original);
+  }
+});
