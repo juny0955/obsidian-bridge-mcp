@@ -73,6 +73,7 @@ export class ReviewerVault {
         for (const relative of this.moveReferences()) {
           if (relative !== args.path && relative.endsWith('.md')) check(path.posix.basename(relative) !== path.posix.basename(args.path), 'Duplicate basename makes move unsafe');
           const content = this.readMoveReference(relative);
+          if (relative.endsWith('.md')) check(!/^ {0,3}\[[^\]\r\n]+\]:[ \t]*\S/mu.test(content), 'Reference-style link makes move unsafe');
           check(!content.includes(args.path) && !content.includes(args.path.slice(0, -3)) &&
             !content.includes(encodeURI(args.path)) && !/!?\[[^\]\n]*\]\((?!https?:\/\/|mailto:|#)[^)]*\)/u.test(content),
           'Path or relative link makes move unsafe');

@@ -295,6 +295,20 @@ test('move scan rejects Archive notes and canvas file references', t => {
   }
 });
 
+test('move rejects same-folder Markdown reference-style links', t => {
+  const { config, put } = fixture(t);
+  config.allowMoves = true;
+  const source = '00-Inbox/A.md', destination = '04-Knowledge/A.md';
+  put(source, sample());
+  put('00-Inbox/Links.md', sample() + '\n[link][id]\n\n[id]: A.md\n');
+  const reviewer = new ReviewerVault(config);
+  assert.throws(() => reviewer.completeReview({
+    path: source, destination, expected_sha256: hash(sample()), rationale: '출처 확인',
+  }), /link|unsafe/iu);
+  assert.equal(fs.existsSync(path.join(config.vault, source)), true);
+  assert.equal(fs.existsSync(path.join(config.vault, destination)), false);
+});
+
 test('review move defers path links, relative links and duplicate basenames', t => {
   for (const [relative, content] of [
     ['02-Projects/링크.md', sample() + '\n[[00-Inbox/주제]]\n'],
