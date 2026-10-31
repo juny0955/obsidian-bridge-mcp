@@ -123,6 +123,11 @@ export class CuratorVault extends ReviewerVault {
       if (journal.type === 'move') {
         check(typeof journal.destination === 'string' && ['prepared', 'destination_verified', 'source_removed', 'committed'].includes(journal.stage), 'Move journal invalid; manual recovery required');
         check(journal.destination !== relative || journal.stage === 'committed', 'Move journal not committed; manual recovery required');
+        if (journal.destination === relative) {
+          check(typeof journal.source_path === 'string', 'Move journal invalid; manual recovery required');
+          const source = this.vault.target(safeRelative(journal.source_path));
+          check(!fs.existsSync(source), 'Move source reappeared; manual recovery required');
+        }
       }
     }
   }

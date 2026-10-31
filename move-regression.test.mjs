@@ -137,3 +137,18 @@ test('move defers relative wikilinks in incoming notes and the source', t => {
     assert.equal(fs.existsSync(path.join(f.vault, f.destination)), false);
   }
 });
+
+
+test('independent review cannot certify destination when committed move source reappears', t => {
+  for (const stage of ['record', 'finalize']) {
+    const f = fixture(t);
+    f.curator.moveNote(f.args);
+    const review = { operation_id: 'independent', path: f.destination, expected_sha256: hash(f.original), rationale: '별도 검토' };
+    if (stage === 'finalize') f.curator.recordReview(review);
+    const recreated = '새로운 내용도 보존';
+    f.put(f.source, recreated);
+    assert.throws(() => stage === 'record' ? f.curator.recordReview(review) : f.curator.finalizeReview(review), /move|source|recovery/iu);
+    assert.equal(fs.readFileSync(path.join(f.vault, f.source), 'utf8'), recreated);
+    assert.equal(fs.readFileSync(path.join(f.vault, f.destination), 'utf8'), f.original);
+  }
+});
