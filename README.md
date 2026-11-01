@@ -103,7 +103,7 @@ OBSIDIAN_CURATOR_CONFIG = "/absolute/path/to/obsidian-bridge-mcp/config.curator.
 4. 변경 또는 정리가 모두 끝난 노트만 최신 SHA256으로 `finalize_review`를 호출해 `curated`로 표시합니다.
 5. 휴지통은 15일 보관합니다. `list_pending_deletions`와 `prepare_deletion_requests`는 만료 대기 항목과 불변 요청 ID를 확인·기록할 뿐, Discord로 전송하지 않습니다. Discord 연동은 범위 밖이며 이 서버에는 승인·영구 삭제 기능이 없으므로 만료 항목도 계속 보존합니다.
 
-`allowMoves`와 `allowTrash`를 켜도 운영 정지가 자동 검증되는 것은 아닙니다. Writer, Obsidian, 동기화 및 다른 프로세스의 쓰기가 실제로 중단된 상태를 별도로 확인할 수 없으면 이동·통합·휴지통 작업을 하지 마세요. 구체적인 복구·보존 불변식은 [`curator-policy.md`](curator-policy.md)와 [`reviewer-setup.md`](reviewer-setup.md)를 확인하세요. 이 문서는 설정 예시이며 이 변경으로 실볼트 규칙이나 실행 프로필은 수정되지 않습니다.
+`allowMoves`와 `allowTrash`를 켜도 운영 정지가 자동 검증되는 것은 아닙니다. 외부 편집·동기화 상태의 사전 확인은 요구하지 않으며 각 변경 직전 원본·대상 파일의 SHA256을 비교합니다. 이동은 참조 스캔 파일의 집합과 해시도 제거 직전에 다시 검사합니다. 해시 불일치·잠금 충돌은 해당 노트를 건너뛰고 오래된 요청을 재시도하지 않습니다. 해시 검사로 검사 사이의 모든 비협력 쓰기를 막을 수는 없으므로 복구·보존 불변식은 [`curator-policy.md`](curator-policy.md)와 [`reviewer-setup.md`](reviewer-setup.md)를 확인하세요. 이 문서는 설정 예시이며 이 변경으로 실볼트 규칙이나 실행 프로필은 수정되지 않습니다.
 
 ## 설치
 
@@ -264,6 +264,6 @@ Claude Code도 [로컬 stdio MCP 서버 연결](https://code.claude.com/docs/en/
 
 Curator의 `move_note`는 `operation_id`, `path`, `expected_sha256`, `destination`, `rationale`을 받는다. 예: `{"operation_id":"classify-1","path":"00-Inbox/topic.md","expected_sha256":"<원본 SHA256>","destination":"04-Knowledge/topic.md","rationale":"지식으로 분류"}`. 성공 시 `status: moved`, 원본 `source_path`, 목적지 `path`, 이동 전 `sha256`을 반환하며 본문과 `status: review`는 바꾸지 않는다. 대상은 같은 이름의 Inbox Markdown과 기존 Projects/Areas/Knowledge/Resources 하위 폴더뿐이다. Journal은 이동·통합·휴지통에서 보호되나 제자리 리뷰와 완료는 가능하다. `allowMoves` 기본값은 false다.
 
-절차는 리뷰 기록 → 필요한 경우 정리 → 이동 → 목적지 재읽기와 분류·내용·링크의 의미 검증 → `finalize_review`이다. 의미 검증은 도구가 강제하지 않는 운영 절차다. 불확실한 분류나 링크, 미지원 링크는 보류하며 링크를 자동 수정하지 않는다. 볼트 Writer, Obsidian, 동기화 및 다른 호스트의 쓰기를 외부에서 모두 중지하고 복제본에서 검증하기 전에는 이동을 활성화하지 않는다. 실볼트 규칙과 역할 경계가 일치하는지도 별도로 검토해야 한다.
+절차는 리뷰 기록 → 필요한 경우 정리 → 이동 → 목적지 재읽기와 분류·내용·링크의 의미 검증 → `finalize_review`이다. 의미 검증은 도구가 강제하지 않는 운영 절차다. 불확실한 분류나 링크, 미지원 링크는 보류하며 링크를 자동 수정하지 않는다. 외부 편집·동기화 상태를 사전 확인하지 않고, 변경 직전 해시를 비교해 충돌한 노트만 건너뛴다. Writer 자동 캡처는 유지한다. 해시 검사는 검사 시점 사이의 모든 동시 쓰기를 차단하지 못하므로 불완전 상태는 자동 복구하지 않는다. 실볼트 규칙과 역할 경계가 일치하는지도 별도로 검토해야 한다.
 
-장애 시 자동 삭제하거나 덮어쓰지 말고 원본·목적지·백업·`stateDir/curator/operations` 저널 및 리뷰 근거를 보존하고 해시와 단계를 확인한다. 양쪽 파일이 존재하거나 저널이 불완전하면 수동 복구가 필요하다. 이동 중 목적지 리뷰·완료는 다른 작업 ID도 차단된다. SIGKILL 등으로 `stateDir`의 `<경로 SHA256>.lock` 디렉터리나 작업 ID 잠금(`\0operation:<operation_id>`의 SHA256)이 남을 수 있으며 자동 만료하지 않는다. 모든 관련 프로세스와 동기화가 완전히 중지됐음을 확인하고 해당 잠금의 소유 작업과 저널·백업을 조사한 후에만 운영자가 해당 빈 잠금 디렉터리를 제거한다. 잠금 제거만으로 미완료 트랜잭션이 복구되지는 않는다.
+장애 시 자동 삭제하거나 덮어쓰지 말고 원본·목적지·백업·`stateDir/curator/operations` 저널 및 리뷰 근거를 보존하고 해시와 단계를 확인한다. 양쪽 파일이 존재하거나 저널이 불완전하면 수동 복구가 필요하다. 이동 중 목적지 리뷰·완료는 다른 작업 ID도 차단된다. SIGKILL 등으로 `stateDir`의 `<경로 SHA256>.lock` 디렉터리나 작업 ID 잠금(`\0operation:<operation_id>`의 SHA256)이 남을 수 있으며 자동 만료하지 않는다. 해당 잠금 소유 MCP 프로세스가 종료됐는지 확인하고 소유 작업과 저널·백업을 조사한 뒤 해당 빈 잠금 디렉터리만 제거한다. Sync 프로세스 정지 여부는 요구하지 않는다. 잠금 제거만으로 미완료 트랜잭션이 복구되지는 않는다.

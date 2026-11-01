@@ -149,7 +149,7 @@ test('Journal notes can be curated in place but never moved', t => {
   assert.equal(reviewer.completeReview({ ...args, destination: source }).status, 'curated');
 });
 
-test('moves require explicit quiescence-gated configuration, including retries', t => {
+test('moves require explicit configuration, including retries', t => {
   const { config, put } = fixture(t);
   const source = '00-Inbox/주제.md', destination = '04-Knowledge/주제.md';
   const file = put(source, sample());
