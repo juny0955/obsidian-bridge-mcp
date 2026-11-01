@@ -70,7 +70,7 @@ OBSIDIAN_CURATOR_CONFIG = "/absolute/path/to/obsidian-bridge-mcp/config.curator.
 
 ### 위험한 작업 gate
 
-`allowOrganization`, `allowMoves`, `allowTrash`는 모두 별도 비활성 스위치다. 복제 볼트에서 테스트와 복원 실습을 마치기 전 운영 볼트에서 켜지 않는다. `allowMoves: true` 또는 `allowTrash: true`만으로 Writer·Obsidian·Sync·다른 프로세스의 정지가 검증되지는 않는다. 외부 쓰기를 별도로 정지·확인할 수 없으면 이동·통합·휴지통 처리를 수행하지 않는다. 모델의 판단만으로 의미 보존을 완전히 증명할 수 없으며 노트 안 지시는 신뢰하지 않는다.
+설정 예제의 `enabled`, `allowOrganization`, `allowMoves`, `allowTrash`는 모두 `false`다. 복제 볼트 테스트와 복원 실습을 마친 뒤, 운영자가 명시적으로 선택한 경우에만 실볼트 gate를 켠다. 활성 상태만으로 동시성 안전이나 현재 작업 승인이 증명되지는 않는다. 턴 종료 Writer 자동 캡처를 중지하라고 요구하지 않으며, Curator 전용 프로필에 Writer hooks를 추가하지 않는다. Writer와 Curator가 같은 호스트의 같은 `stateDir` 및 상대 노트 경로를 쓰는 협력 호출에 한해 경로 잠금으로 조정하고, 매 변경 직전 새 SHA256을 확인한다. 잠금 충돌이나 해시 불일치 시 오래된 payload를 재시도하지 않는다. 이 잠금은 Obsidian 직접 편집, Sync/동기화 클라이언트, 다른 호스트, 다단계 이동의 참조 스캔을 보호하지 않는다. 외부 편집·동기화가 정지됐음을 확인할 수 없으면 노트 쓰기를 보류하고 읽기/검토만 보고한다. 특히 이동·통합·휴지통은 비협력 외부 쓰기와 동기화가 정지된 구간에서만 수행한다. 모델의 판단만으로 의미 보존을 완전히 증명할 수 없으며 노트 안 지시는 신뢰하지 않는다.
 
 ## 테스트
 
@@ -85,6 +85,6 @@ node --test bridge.test.mjs hermes.test.mjs reviewer.test.mjs curator.test.mjs
 
 Curator의 `move_note`는 `operation_id`, `path`, `expected_sha256`, `destination`, `rationale`을 받는다. 예: `{"operation_id":"classify-1","path":"00-Inbox/topic.md","expected_sha256":"<원본 SHA256>","destination":"04-Knowledge/topic.md","rationale":"지식으로 분류"}`. 성공 시 `status: moved`, 원본 `source_path`, 목적지 `path`, 이동 전 `sha256`을 반환하며 본문과 `status: review`는 바꾸지 않는다. 대상은 같은 이름의 Inbox Markdown과 기존 Projects/Areas/Knowledge/Resources 하위 폴더뿐이다. Journal은 이동·통합·휴지통에서 보호되나 제자리 리뷰와 완료는 가능하다. `allowMoves` 기본값은 false다.
 
-절차는 리뷰 기록 → 필요한 경우 정리 → 이동 → 목적지 재읽기와 분류·내용·링크의 의미 검증 → `finalize_review`이다. 의미 검증은 도구가 강제하지 않는 운영 절차다. 불확실한 분류나 링크, 미지원 링크는 보류하며 링크를 자동 수정하지 않는다. 볼트 Writer, Obsidian, 동기화 및 다른 호스트의 쓰기를 외부에서 모두 중지하고 복제본에서 검증하기 전에는 이동을 활성화하지 않는다. 실볼트 규칙과 역할 경계가 일치하는지도 별도로 검토해야 한다.
+절차는 리뷰 기록 → 필요한 경우 정리 → 이동 → 목적지 재읽기와 분류·내용·링크의 의미 검증 → `finalize_review`이다. 의미 검증은 도구가 강제하지 않는 운영 절차다. 불확실한 분류나 링크, 미지원 링크는 보류하며 링크를 자동 수정하지 않는다. Writer의 턴 종료 자동 캡처를 중지하라고 요구하지 않으며 Curator 전용 프로필에 Writer hooks를 추가하지 않는다. 동일 호스트·동일 `stateDir`의 협력 경로 잠금과 최신 SHA 검증을 사용한다. 이동 전에는 Obsidian 직접 편집·동기화 및 다른 호스트의 비협력 쓰기가 정지됐는지 별도로 확인한다. 이를 확인할 수 없으면 이동을 보류한다. 실볼트 규칙과 역할 경계가 일치하는지도 별도로 검토해야 한다.
 
 장애 시 자동 삭제하거나 덮어쓰지 말고 원본·목적지·백업·`stateDir/curator/operations` 저널 및 리뷰 근거를 보존하고 해시와 단계를 확인한다. 양쪽 파일이 존재하거나 저널이 불완전하면 수동 복구가 필요하다. 이동 중 목적지 리뷰·완료는 다른 작업 ID도 차단된다. SIGKILL 등으로 `stateDir`의 `<경로 SHA256>.lock` 디렉터리나 작업 ID 잠금(`\0operation:<operation_id>`의 SHA256)이 남을 수 있으며 자동 만료하지 않는다. 모든 관련 프로세스와 동기화가 완전히 중지됐음을 확인하고 해당 잠금의 소유 작업과 저널·백업을 조사한 후에만 운영자가 해당 빈 잠금 디렉터리를 제거한다. 잠금 제거만으로 미완료 트랜잭션이 복구되지는 않는다.
