@@ -85,7 +85,7 @@ export class ReviewerVault {
       path.posix.basename(args.path) === path.posix.basename(args.destination) &&
       (args.path !== args.destination || !args.path.startsWith('00-Inbox/')), 'Invalid destination');
     check(!args.path.startsWith('01-Journal/') || source === destination, 'Journal notes must stay in place');
-    check(source === destination || this.config.allowMoves === true, 'Review moves disabled: require externally verified quiescence');
+    check(source === destination || this.config.allowMoves === true, 'Review moves disabled by reviewer configuration');
     const key = hash([args.path, args.expected_sha256, args.destination].join('\0'));
     const reviewerDir = path.join(this.config.stateDir, 'reviewer');
     fs.mkdirSync(reviewerDir, { recursive: true, mode: 0o700 });

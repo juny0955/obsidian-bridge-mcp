@@ -213,7 +213,8 @@ export class CuratorVault extends ReviewerVault {
   assertMoveSafe(source) {
     const normalized = source.slice(0, -3).toLocaleLowerCase();
     const base = path.posix.basename(normalized);
-    for (const reference of this.moveReferences()) {
+    const references = this.moveReferences();
+    for (const reference of references) {
       if (reference !== source && reference.toLocaleLowerCase().endsWith('.md') && path.posix.basename(reference, path.posix.extname(reference)).toLocaleLowerCase() === base) throw new Error('Link scan: duplicate basename; manual review required');
       const content = this.readMoveReference(reference);
       let decoded;
@@ -226,6 +227,12 @@ export class CuratorVault extends ReviewerVault {
         check(!/^\.{1,2}\//u.test(target) && target !== base && target !== normalized && !(target.includes('/') && normalized.endsWith('/' + target)), 'Link scan: wikilink reference');
       }
     }
+    return references.map(reference => ({ path: reference, sha256: hash(fs.readFileSync(this.vault.target(reference))) }));
+  }
+  verifyMoveReferences(snapshot, destination) {
+    const latest = this.moveReferences().filter(relative => relative !== destination);
+    check(latest.length === snapshot.length && latest.every((relative, index) => relative === snapshot[index].path), 'Reference set changed during move');
+    for (const reference of snapshot) check(hash(fs.readFileSync(this.vault.target(reference.path))) === reference.sha256, 'Reference changed during move');
   }
   moveNote(args) {
     const source = safeRelative(args.path), destination = safeRelative(args.destination);
@@ -234,7 +241,7 @@ export class CuratorVault extends ReviewerVault {
   moveNoteLocked(args) {
     const op = operationId(args.operation_id), source = safeRelative(args.path), destination = safeRelative(args.destination);
     const rationale = safeRationale(args.rationale), sha = args.expected_sha256;
-    check(this.config.role === 'curator' && this.config.enabled === true && this.config.allowMoves === true, 'Moves disabled: require externally verified quiescence');
+    check(this.config.role === 'curator' && this.config.enabled === true && this.config.allowMoves === true, 'Moves disabled by curator configuration');
     check(typeof sha === 'string' && /^[a-f0-9]{64}$/u.test(sha), 'Invalid SHA256');
     check(/^00-Inbox\/.+\.md$/u.test(source) && /^(?:02-Projects|03-Areas|04-Knowledge|05-Resources)\/.+\.md$/u.test(destination) && path.posix.basename(source) === path.posix.basename(destination), 'Invalid move paths');
     const sourceFile = this.vault.target(source), destFile = this.vault.target(destination);
@@ -271,7 +278,7 @@ export class CuratorVault extends ReviewerVault {
     frontmatter(note.content);
     const evidence = makeEvidence();
     if (fs.existsSync(evidenceFile)) verifyEvidence(evidence);
-    this.assertMoveSafe(source);
+    const referenceSnapshot = this.assertMoveSafe(source);
     const bytes = fs.readFileSync(sourceFile), stat = fs.statSync(sourceFile);
     check(hash(bytes) === sha, 'Source changed before backup');
     this.backup(op, source, bytes);
@@ -281,6 +288,7 @@ export class CuratorVault extends ReviewerVault {
     this.writeJsonReplace(file, { ...operation, stage: 'destination_verified' });
     const latest = fs.statSync(sourceFile);
     check(latest.ino === stat.ino && latest.dev === stat.dev && this.vault.read(source).sha256 === sha, 'Source changed during move');
+    this.verifyMoveReferences(referenceSnapshot, destination);
     fs.unlinkSync(sourceFile); syncDirectory(path.dirname(sourceFile));
     this.writeJsonReplace(file, { ...operation, stage: 'source_removed' });
     if (!fs.existsSync(evidenceFile)) this.writeJson(evidenceFile, evidence); else verifyEvidence(evidence);
@@ -384,7 +392,7 @@ export class CuratorVault extends ReviewerVault {
     check(targetFront[2].split('\n').filter(line => line.startsWith('updated:')).length <= 1 && sourceFront[2].split('\n').filter(line => line.startsWith('updated:')).length <= 1, 'Duplicate updated property');
     const mergedTokens = tokens(mergedBody);
     for (const token of [...tokens(bodyOf(target.content)), ...tokens(bodyOf(source.content))]) check(mergedTokens.includes(token), `Merge omits original link or provenance marker: ${token}`);
-    check(this.config.allowMoves === true, 'Merge moves disabled: require externally verified quiescence');
+    check(this.config.allowMoves === true, 'Merge moves disabled by curator configuration');
     this.assertNoReferences(sourcePath, targetPath);
     const prepared = { ...operation, stage: 'prepared', prepared_at: this.isoNow() };
     if (fs.existsSync(operationFile)) {

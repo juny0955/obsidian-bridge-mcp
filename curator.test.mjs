@@ -395,6 +395,21 @@ test('move and merge share an operation ID lock even with different paths', t =>
 });
 
 
+test('move rechecks reference hashes immediately before removing the source', t => {
+  const { config, put, vault } = fixture(t), source = '00-Inbox/topic.md', destination = '04-Knowledge/topic.md', ref = '04-Knowledge/ref.md', original = sample(), op = 'reference-hash-conflict';
+  put(source, original); put(ref, '[[unrelated]]'); fs.mkdirSync(path.join(vault, '04-Knowledge'), { recursive: true });
+  const curator = new CuratorVault(config);
+  curator.recordReview({ operation_id: op, path: source, expected_sha256: hash(original), rationale: '검토' });
+  const write = curator.writeJsonReplace.bind(curator);
+  curator.writeJsonReplace = (file, value) => {
+    write(file, value);
+    if (value.stage === 'destination_verified') fs.writeFileSync(path.join(vault, ref), '[[topic]]');
+  };
+  assert.throws(() => curator.moveNote({ operation_id: op, path: source, destination, expected_sha256: hash(original), rationale: '분류' }), /Reference changed during move/u);
+  assert.equal(fs.readFileSync(path.join(vault, source), 'utf8'), original);
+  assert.equal(fs.readFileSync(path.join(vault, destination), 'utf8'), original);
+});
+
 test('move link scan includes hidden uppercase Markdown and canvas', t => {
   for (const reference of ['.hidden/link.MD', 'Archive/ref.CANVAS']) {
     const {config, put, vault} = fixture(t), source = '00-Inbox/topic.md', destination = '04-Knowledge/topic.md', original = sample();
