@@ -21,7 +21,8 @@ Codex와 Hermes에서 유용한 지식과 결정을 Obsidian 볼트에 기록하
 | `config.hermes.example.json` | VPS Hermes용 비활성 기본 설정 |
 | `config.curator.example.json` | 별도 Curator MCP의 비활성 기본 설정 |
 | `curator-server.mjs` / `curator-vault.mjs` | 리뷰, 단계별 본문 정리, 통합, 복원 가능한 휴지통을 담당하는 Curator |
-| `curator-policy.md` | Curator 역할·보존·삭제 승인 정책 |
+| `curator-policy.md` | Curator MCP 범위·보존·변경 안전 정책 |
+| `curator-workflow.md` | Curator 노트 검토·분류·append 누적 정돈 절차 |
 | `curator.test.mjs` | Curator MCP의 안전성·워크플로 테스트 |
 | `global-instructions.md` | Codex 지침 설치 안내와 복사용 지침 |
 | `vault-rules/` | Codex·Hermes 공용 볼트 규칙의 배포 원본 |
@@ -62,7 +63,7 @@ obsidian-vault/
 - `NOTE_RULES.md`: 분류·생성·추가·연결 규칙
 - `Templates/`: 노트 유형별 Markdown 템플릿. 위의 `Knowledge.md`는 예시이며 폴더 안의 `.md` 파일을 모두 읽습니다.
 
-Writer의 저장 위치와 생성·보완 판단은 볼트의 `99-System/AI/NOTE_RULES.md`가 단일 기준입니다. `AGENTS.md`와 클라이언트 지침은 이 문서를 참조합니다. `vault-rules/`는 Writer 규칙의 배포 원본입니다. 설치 시 기존 볼트 규칙을 백업·비교하고 필요한 변경을 승인받아 병합하세요. 기존 `PROPERTY_SCHEMA.md`와 템플릿은 유지합니다. 별도 Curator MCP는 아래 절차와 저장소의 `curator-policy.md`를 따르며, 실제 볼트 규칙은 별도 승인·배포 전까지 변경하지 않습니다.
+Writer의 저장 위치와 생성·보완 판단은 볼트의 `99-System/AI/NOTE_RULES.md`가 단일 기준입니다. `AGENTS.md`와 클라이언트 지침은 이 문서를 참조합니다. `vault-rules/`는 Writer 규칙의 배포 원본입니다. 설치 시 기존 볼트 규칙을 백업·비교하고 필요한 변경을 승인받아 병합하세요. 기존 `PROPERTY_SCHEMA.md`와 템플릿은 유지합니다. 별도 Curator MCP는 아래 절차와 저장소의 `curator-policy.md` 및 `curator-workflow.md`를 따르며, `get_context`가 두 문서를 함께 반환합니다. 정책은 실행 권한·보존·변경 안전을, workflow는 검토·분류·본문 구조화 절차를 담당합니다. 실제 볼트 규칙은 별도 승인·배포 전까지 변경하지 않습니다.
 
 검색과 노트 쓰기는 `00-Inbox`부터 `05-Resources`까지 위에 나열한 여섯 폴더로 제한됩니다. 없는 노트 폴더는 첫 저장 시 생성됩니다. 규칙·템플릿은 읽기 대상으로 사용하고, 이 도구로 수정하지 않습니다.
 
