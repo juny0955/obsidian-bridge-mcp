@@ -48,6 +48,26 @@ test('Curator MCP exposes management tools but never exposes permanent deletion'
   assert.ok(!names.some(name => /delete|approve|discord/iu.test(name)));
 });
 
+test('get_context returns both the technical policy and the Curator workflow', t => {
+  const { config, put } = fixture(t);
+  put('AGENTS.md', '# 공통');
+  put('99-System/AI/PROPERTY_SCHEMA.md', '# status: curated');
+  put('99-System/AI/NOTE_RULES.md', '# Writer 분류 규칙');
+  put('99-System/Templates/Knowledge.md', '# Template');
+  const replies = callServer(t, config, [{
+    jsonrpc: '2.0', id: 1, method: 'tools/call',
+    params: { name: 'get_context', arguments: {} },
+  }]);
+  const result = replies[0].result;
+  assert.equal(result.isError, false);
+  const context = JSON.parse(result.content[0].text);
+  assert.ok(context.curatorPolicy.includes('데이터 보존'));
+  assert.ok(context.curatorWorkflow.includes('누적 append 정돈'));
+  assert.ok(context.curatorWorkflow.includes('NOTE_RULES.md'));
+  assert.ok(context.curatorWorkflow.includes('review'));
+  assert.ok(context.curatorWorkflow.includes('hermes-memory'));
+});
+
 test('Curator rejects conflicting config variables and accepts the legacy Reviewer variable', t => {
   const { root, config } = fixture(t);
   const current = path.join(root, 'curator.json'), legacy = path.join(root, 'reviewer.json');

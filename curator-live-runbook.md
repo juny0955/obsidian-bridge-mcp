@@ -13,7 +13,7 @@
 ## 실행 전 점검
 
 1. `hermes -p obsidiancuratorlive mcp test obsidian_curator`가 성공하고 13개 도구를 발견해야 한다.
-2. 세션에서 `get_context`를 호출해 실제 경로가 `/home/ubuntu/vaults/Second-Brain`인지 확인한다.
+2. 세션에서 `get_context`를 호출해 실제 경로가 `/home/ubuntu/vaults/Second-Brain`인지 확인하고, `curatorPolicy`와 `curatorWorkflow`가 모두 반환되는지 확인한다.
 3. 활성 Writer 설정이 Curator와 같은 볼트·`stateDir`인지 확인한다. Writer를 끄지 않는다.
 4. 최근 백업의 `vault.tar.gz.sha256` 검사가 통과해야 한다. 백업 후 자동 캡처나 외부 편집이 있었다면 최신 백업을 다시 만든다.
 5. 외부 편집·동기화 상태를 사전 확인하지 않는다. 각 쓰기 직전에 대상의 예상 SHA256과 현재 해시를 비교한다. 해시 불일치나 잠금 충돌이 생기면 해당 노트만 건너뛰고 최신 내용을 다시 읽어 검토한다. 오래된 payload는 재시도하지 않는다.

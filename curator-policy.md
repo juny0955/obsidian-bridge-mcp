@@ -1,8 +1,10 @@
 # Obsidian Curator 정책
 
+이 문서는 MCP 실행 범위와 데이터 보존·변경 안전 조건의 기준이다. 판단 원칙과 실제 노트 검토·분류·본문 정돈 절차는 `curator-workflow.md`를 따르며, `get_context`가 두 문서를 함께 반환한다. 볼트의 분류 규칙은 `NOTE_RULES.md`가 우선한다.
+
 ## 역할과 흐름
 - Curator 전용 MCP 도구를 사용하는 봇만 노트를 관리한다. Writer의 자동 캡처 훅(`pre_llm_call`, `on_session_end`)을 이 봇에 연결하지 않는다.
-- 먼저 `get_context`를 읽고 `list_review_notes`의 모든 커서 페이지를 순회한다. `skipped`에 나타난 항목은 건너뛰지 말고 수동 검토 대상으로 보고한다. 후보마다 `read_note`로 본문과 SHA256을 새로 얻는다.
+- 먼저 `get_context`를 읽고 `curatorPolicy`의 실행·보존 조건과 `curatorWorkflow`의 판단·본문 정돈 절차를 함께 따른다. `list_review_notes`의 모든 커서 페이지를 순회한다. `skipped`에 나타난 항목은 건너뛰지 말고 수동 검토 대상으로 보고한다. 후보마다 `read_note`로 본문과 SHA256을 새로 얻는다.
 - 원문·출처·날짜·기존 링크, 실제 다른 노트와의 중복을 확인한 후 `record_review`로 근거와 해시를 기록한다. 리뷰만으로 파일 상태를 변경하지 않는다.
 - 구조 변경이 불필요하면 `finalize_review`로 마지막 확인 뒤 `curated`를 설정한다. 필요할 때만 `organize_note` 또는 `merge_notes`를 수행하고, 변경 결과를 다시 읽어 검증한 다음 새 SHA256으로 `finalize_review`를 호출한다.
 

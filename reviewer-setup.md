@@ -60,7 +60,7 @@ OBSIDIAN_CURATOR_CONFIG = "/absolute/path/to/obsidian-bridge-mcp/config.curator.
 - `record_review`, `organize_note`, `merge_notes`, `trash_note`
 - `list_trash`, `restore_note`, `list_pending_deletions`, `prepare_deletion_requests`, `finalize_review`
 
-1. 먼저 `get_context`와 `curator-policy.md`를 읽고 리뷰 후보 커서 페이지를 끝까지 순회한다. `skipped`의 큰 파일·깨진 frontmatter·중복 상태는 건너뛰지 말고 수동 확인한다. 페이지 중 볼트가 변경되어 stale cursor 오류가 나면 첫 페이지부터 다시 조회한다.
+1. `get_context`로 볼트 규칙·스키마·템플릿, `curatorPolicy`, `curatorWorkflow`를 모두 읽는다. `curatorPolicy`는 운영 안전, `curatorWorkflow`는 내용 검토·분류·본문 정돈 기준이다. `list_review_notes`의 모든 커서 페이지를 순회하고 `skipped`의 큰 파일·깨진 frontmatter·중복 상태는 건너뛰지 말고 수동 확인한다. 페이지 중 볼트 변경으로 stale cursor 오류가 나면 첫 페이지부터 다시 조회한다.
 2. 노트별 최신 본문·SHA256으로 출처·날짜·중복·링크·고유 사실을 확인하고 `record_review`로 리뷰 증거만 남긴다. 이 단계에서는 원문을 변경하지 않는다.
 3. 변경할 필요가 있을 때만 본문을 정리한다. 모든 원래 wikilink/URL, frontmatter 속성, 날짜·출처와 Writer 중복 방지 마커를 보존하고, 다시 읽어 의미상 손실이 없는지 검토한다.
 4. 통합은 전체 출처와 고유 정보를 유지하고, 참조 스캔·해시 검사를 통과하는 경우에만 실행한다. 예상 SHA256 불일치나 잠금 충돌은 해당 노트만 건너뛰고 오래된 payload를 재시도하지 않는다. `01-Journal`은 변경·이동·통합·휴지통 대상이 아니다. 보존 가능성이 모호하면 작업을 보류한다.
