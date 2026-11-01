@@ -246,7 +246,7 @@ export class CuratorVault extends ReviewerVault {
     const result = { status: 'moved', operation_id: op, source_path: source, path: destination, sha256: sha };
     const makeEvidence = () => {
       const original = this.requireReview(op, source, sha).record;
-      return { ...original, path: destination, stage: 'organized', organized_sha256: sha, moved_from: source, move_operation_id: op };
+      return { ...original, reviewed_sha256: original.reviewed_sha256 ?? original.sha256, sha256: sha, path: destination, stage: 'organized', organized_sha256: sha, moved_from: source, move_operation_id: op };
     };
     const verifyEvidence = expected => {
       check(fs.existsSync(evidenceFile), 'Move evidence missing');

@@ -311,6 +311,18 @@ test('move reviewed inbox note without changing bytes then finalize destination'
   assert.deepEqual(curator.moveNote({ operation_id: op, path: source, destination, expected_sha256: hash(original), rationale: '지식으로 분류' }), moved);
 });
 
+test('organize before moving preserves evidence and allows finalization', t => {
+  const { config, put, vault } = fixture(t), source = '00-Inbox/topic.md', destination = '04-Knowledge/topic.md', original = sample(), op = 'organize-before-move';
+  put(source, original); fs.mkdirSync(path.join(vault, '04-Knowledge'));
+  const c = new CuratorVault(config);
+  c.recordReview({ operation_id: op, path: source, expected_sha256: hash(original), rationale: '검토' });
+  const organized = c.organizeNote({ operation_id: op, path: source, expected_sha256: hash(original), new_body: '# 정리\n\n검증된 고유 내용.\n<!-- hermes-memory:' + 'a'.repeat(64) + ' -->\n', rationale: '이동 전 정리' });
+  const moved = c.moveNote({ operation_id: op, path: source, destination, expected_sha256: organized.sha256, rationale: '지식으로 분류' });
+  const done = c.finalizeReview({ operation_id: op, path: destination, expected_sha256: moved.sha256 });
+  assert.equal(done.status, 'curated');
+  assert.match(fs.readFileSync(path.join(vault, destination), 'utf8'), /검증된 고유 내용/u);
+});
+
 test('move then organize and finalize supports retries at each stage', t => {
   const { config, put, vault } = fixture(t), source = '00-Inbox/topic.md', destination = '04-Knowledge/topic.md', original = sample(), op = 'move-organize';
   put(source, original); fs.mkdirSync(path.join(vault, '04-Knowledge'));
